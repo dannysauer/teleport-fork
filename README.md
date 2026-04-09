@@ -21,30 +21,25 @@ the automation that keeps the fork useful.
 
 ## Automation overview
 
-```
-gravitational/teleport (upstream)
-        │  synced every 6h by sync-upstream.yml
-        ▼
-  master branch  ──── new tag ────► prep-obs-source.yml
-                                         │
-                              build web assets (Node/pnpm)
-                              vendor fdpass-teleport Rust deps
-                              upload webassets tarball to GitHub Release
-                              osc commit → OBS rebuilds
-                                         │
-                      ┌──────────────────┴──────────────────┐
-                      ▼                                      ▼
-               OBS: teleport pkg                   OBS: teleport-container (KIWI)
-               (RPM + Deb)                         (Tumbleweed-based OCI image)
-                      │                                      │
-                      └──────────────┬───────────────────────┘
-                                     │ published to registry.opensuse.org
-                                     │ OBS calls workflow_dispatch
-                                     ▼
-                             sync-registry.yml
-                             (pulls from registry.opensuse.org,
-                              pushes to ghcr.io,
-                              packages + pushes Helm charts)
+```mermaid
+flowchart TD
+    upstream(["gravitational/teleport\nupstream"])
+
+    subgraph GHA ["GitHub Actions"]
+        master["master branch"]
+        prep["prep-obs-source.yml\nbuild web assets · vendor Rust deps\nupload artifacts · osc commit"]
+        sync["sync-registry.yml\npull registry.opensuse.org → push ghcr.io\npackage & push Helm charts to ghcr.io"]
+    end
+
+    subgraph OBS ["OBS — home:dannysauer:teleport"]
+        obs_pkg["teleport\nRPM + Deb"]
+        obs_ctr["teleport-container\nKIWI · Tumbleweed OCI"]
+    end
+
+    upstream -->|"sync-upstream.yml · every 6h"| master
+    master -->|"new tag"| prep
+    prep --> obs_pkg & obs_ctr
+    obs_pkg & obs_ctr -->|"published to registry.opensuse.org\nOBS webhook → workflow_dispatch"| sync
 ```
 
 ## Secrets required
