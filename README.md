@@ -23,12 +23,13 @@ the automation that keeps the fork useful.
 
 ```mermaid
 flowchart TD
-    upstream(["gravitational/teleport\nupstream"])
+    subgraph SRC ["Upstream"]
+        upstream(["gravitational/teleport"])
+    end
 
     subgraph GHA ["GitHub Actions"]
         master["master branch"]
-        prep["prep-obs-source.yml\nbuild web assets · vendor Rust deps\nupload artifacts · osc commit"]
-        sync["sync-registry.yml\npull registry.opensuse.org → push ghcr.io\npackage & push Helm charts to ghcr.io"]
+        prep["prep-obs-source.yml\nbuild web assets · vendor Rust deps\nupload artifacts · trigger OBS"]
     end
 
     subgraph OBS ["OBS — home:dannysauer:teleport"]
@@ -36,10 +37,12 @@ flowchart TD
         obs_ctr["teleport-container\nKIWI · Tumbleweed OCI"]
     end
 
+    sync["sync-registry.yml\npull registry.opensuse.org → push ghcr.io\npush Helm charts to ghcr.io OCI"]
+
     upstream -->|"sync-upstream.yml · every 6h"| master
     master -->|"new tag"| prep
     prep --> obs_pkg & obs_ctr
-    obs_pkg & obs_ctr -->|"published to registry.opensuse.org\nOBS webhook → workflow_dispatch"| sync
+    obs_pkg & obs_ctr -->|"published · 15 min poll"| sync
 ```
 
 ## Secrets required
