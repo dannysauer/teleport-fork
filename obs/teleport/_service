@@ -1,0 +1,97 @@
+<services>
+  <!--
+    Fetch Teleport source from the fork's master branch at the specified tag.
+    The revision and webassets/fdpass URLs below are updated automatically by
+    prep-obs-source.yml each time a new upstream tag is synced.
+
+    To update manually:
+      osc co home:dannysauer:teleport teleport
+      # edit revision + download_url paths below
+      osc commit -m "Update to vX.Y.Z"
+  -->
+  <service name="obs_scm">
+    <param name="url">https://github.com/dannysauer/teleport-fork</param>
+    <param name="scm">git</param>
+    <param name="revision">v19.0.0</param>
+    <param name="versionformat">@PARENT_TAG@</param>
+    <param name="versionrewrite-pattern">v(.*)</param>
+    <!-- Exclude large directories not needed for the build -->
+    <param name="exclude">.git</param>
+    <param name="exclude">e</param>
+    <param name="exclude">e2e</param>
+    <param name="exclude">rfd</param>
+    <param name="exclude">docs</param>
+    <param name="filename">teleport</param>
+  </service>
+
+  <!--
+    Vendor all Go module dependencies.
+    This runs during the OBS service phase which has network access.
+    The result is a vendor/ directory added to the source tarball.
+  -->
+  <service name="go_modules">
+    <param name="archive">teleport*.tar.gz</param>
+  </service>
+
+  <!-- Set spec Version: and debian changelog version from the git tag -->
+  <service name="set_version">
+    <param name="basename">teleport</param>
+  </service>
+
+  <!--
+    Pre-built web assets from GitHub Releases.
+    Built by prep-obs-source.yml using Node/pnpm (not available in OBS).
+    The tarball contains webassets/ including the oss-sha file, which allows
+    the build-webassets-if-changed.sh script to detect them as up-to-date
+    without needing to re-run pnpm.
+  -->
+  <service name="download_url">
+    <param name="host">github.com</param>
+    <param name="protocol">https</param>
+    <param name="path">/dannysauer/teleport-fork/releases/download/v19.0.0/teleport-19.0.0-webassets.tar.gz</param>
+  </service>
+
+  <!--
+    Pre-vendored Rust dependencies for fdpass-teleport.
+    Contains tool/fdpass-teleport/vendor/ and tool/fdpass-teleport/.cargo/config.toml
+    so cargo can build offline.
+  -->
+  <service name="download_url">
+    <param name="host">github.com</param>
+    <param name="protocol">https</param>
+    <param name="path">/dannysauer/teleport-fork/releases/download/v19.0.0/teleport-19.0.0-fdpass-vendor.tar.gz</param>
+  </service>
+
+  <!--
+    Pre-built fdpass-teleport binaries for Ubuntu (Ubuntu 24.04 has Rust 1.75,
+    too old for teleport's required 1.94). Tumbleweed builds fdpass from source.
+  -->
+  <service name="download_url">
+    <param name="host">github.com</param>
+    <param name="protocol">https</param>
+    <param name="path">/dannysauer/teleport-fork/releases/download/v19.0.0/fdpass-teleport-linux-amd64</param>
+  </service>
+  <service name="download_url">
+    <param name="host">github.com</param>
+    <param name="protocol">https</param>
+    <param name="path">/dannysauer/teleport-fork/releases/download/v19.0.0/fdpass-teleport-linux-arm64</param>
+  </service>
+
+  <!--
+    Go 1.25 toolchain tarballs for Ubuntu 24.04 builds.
+    Ubuntu 24.04's packaged Go (1.22) is too old.
+    OBS places these in the build root; debian/rules installs whichever
+    matches the build architecture.
+    Update the version here when go_version in build.assets/versions.mk changes.
+  -->
+  <service name="download_url">
+    <param name="host">go.dev</param>
+    <param name="protocol">https</param>
+    <param name="path">/dl/go1.25.9.linux-amd64.tar.gz</param>
+  </service>
+  <service name="download_url">
+    <param name="host">go.dev</param>
+    <param name="protocol">https</param>
+    <param name="path">/dl/go1.25.9.linux-arm64.tar.gz</param>
+  </service>
+</services>

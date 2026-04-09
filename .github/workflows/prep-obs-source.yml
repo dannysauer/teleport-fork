@@ -1,0 +1,312 @@
+name: Prepare OBS source
+
+# Triggered by a new version tag being pushed to master (by sync-upstream.yml),
+# or manually for a specific tag.
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v19.0.4)'
+        required: true
+
+permissions:
+  contents: write  # to create/update GitHub Releases
+
+jobs:
+  # ── 1. Build web assets ────────────────────────────────────────────────────
+  build-webassets:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      webassets_asset: ${{ steps.version.outputs.webassets_asset }}
+
+    steps:
+      - name: Resolve tag
+        id: version
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "webassets_asset=teleport-${VERSION}-webassets.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout source at tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+          # Check out from master branch (clean upstream mirror)
+          repository: ${{ github.repository }}
+
+      - name: Apply patches (if any)
+        run: |
+          # Patches live in patches/ on the autobuild branch.
+          # Fetch that branch and apply any .patch files in order.
+          git fetch origin autobuild
+          TMP=$(mktemp -d)
+          git archive origin/autobuild patches/ | tar -x -C "$TMP" 2>/dev/null || true
+          PATCHES=$(find "$TMP/patches" -name '*.patch' | sort 2>/dev/null)
+          if [ -n "$PATCHES" ]; then
+            echo "Applying patches:"
+            for p in $PATCHES; do
+              echo "  $p"
+              git apply "$p"
+            done
+          else
+            echo "No patches to apply."
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web assets
+        run: make build-ui-oss
+        # This populates webassets/teleport/ and writes webassets/oss-sha.
+        # The oss-sha file is the SHA-512 hash of the web/ source tree, used by
+        # the build-webassets-if-changed.sh script to skip rebuilding in OBS.
+
+      - name: Package webassets
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ASSET="${{ steps.version.outputs.webassets_asset }}"
+          # Include webassets/ dir (built assets + oss-sha) so OBS can verify
+          # the hash without re-running pnpm.
+          tar czf "$ASSET" webassets/
+          echo "Created $ASSET ($(du -sh "$ASSET" | cut -f1))"
+
+      - name: Upload webassets artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webassets
+          path: ${{ steps.version.outputs.webassets_asset }}
+          retention-days: 1
+
+  # ── 2. Build fdpass-teleport for Ubuntu (Rust too old in Ubuntu 24.04) ─────
+  build-fdpass:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    needs: [build-webassets]
+
+    steps:
+      - name: Resolve tag
+        id: version
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout source at tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.94.0'
+          targets: ${{ matrix.arch == 'arm64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu' }}
+
+      - name: Install cross-compilation tools (arm64 only)
+        if: matrix.arch == 'arm64'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build fdpass-teleport
+        working-directory: tool/fdpass-teleport
+        run: |
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+            cargo build --release --locked --target aarch64-unknown-linux-gnu
+            cp target/aarch64-unknown-linux-gnu/release/fdpass-teleport fdpass-teleport-linux-arm64
+          else
+            cargo build --release --locked --target x86_64-unknown-linux-gnu
+            cp target/x86_64-unknown-linux-gnu/release/fdpass-teleport fdpass-teleport-linux-amd64
+          fi
+
+      - name: Upload fdpass artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fdpass-${{ matrix.arch }}
+          path: tool/fdpass-teleport/fdpass-teleport-linux-${{ matrix.arch }}
+          retention-days: 1
+
+  # ── 3. Vendor fdpass Rust deps for Tumbleweed OBS build ───────────────────
+  vendor-fdpass:
+    runs-on: ubuntu-latest
+    needs: [build-webassets]
+
+    steps:
+      - name: Resolve tag
+        id: version
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout source at tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.94.0'
+
+      - name: Vendor fdpass-teleport Rust dependencies
+        working-directory: tool/fdpass-teleport
+        run: |
+          mkdir -p .cargo
+          cargo vendor vendor 2>/dev/null | tee .cargo/config.toml.snippet
+          # Merge the vendor config into .cargo/config.toml
+          cat >> .cargo/config.toml << 'EOF'
+          # auto-generated by vendor step — do not edit
+          EOF
+          cat .cargo/config.toml.snippet >> .cargo/config.toml
+
+      - name: Package vendor archive
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          tar czf "teleport-${VERSION}-fdpass-vendor.tar.gz" \
+            tool/fdpass-teleport/vendor/ \
+            tool/fdpass-teleport/.cargo/
+          echo "Created fdpass-vendor tarball"
+
+      - name: Upload vendor artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fdpass-vendor
+          path: teleport-${{ steps.version.outputs.version }}-fdpass-vendor.tar.gz
+          retention-days: 1
+
+  # ── 4. Create GitHub Release and submit to OBS ────────────────────────────
+  publish:
+    runs-on: ubuntu-latest
+    needs: [build-webassets, build-fdpass, vendor-fdpass]
+
+    steps:
+      - name: Resolve tag
+        id: version
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "Teleport $VERSION" \
+            --notes "Automated build from upstream tag $TAG. See [gravitational/teleport](https://github.com/gravitational/teleport/releases/tag/$TAG) for upstream release notes." \
+            --prerelease \
+            artifacts/webassets/teleport-${VERSION}-webassets.tar.gz \
+            artifacts/fdpass-vendor/teleport-${VERSION}-fdpass-vendor.tar.gz \
+            artifacts/fdpass-amd64/fdpass-teleport-linux-amd64 \
+            artifacts/fdpass-arm64/fdpass-teleport-linux-arm64 \
+          || echo "Release may already exist; uploading assets to existing release"
+          # Upload to existing release if create failed
+          for f in \
+            artifacts/webassets/teleport-${VERSION}-webassets.tar.gz \
+            artifacts/fdpass-vendor/teleport-${VERSION}-fdpass-vendor.tar.gz \
+            artifacts/fdpass-amd64/fdpass-teleport-linux-amd64 \
+            artifacts/fdpass-arm64/fdpass-teleport-linux-arm64; do
+            gh release upload "$TAG" "$f" --clobber \
+              --repo "${{ github.repository }}" 2>/dev/null || true
+          done
+
+      - name: Checkout autobuild branch (for OBS configs)
+        uses: actions/checkout@v4
+        with:
+          ref: autobuild
+          path: autobuild
+
+      - name: Install osc
+        run: |
+          sudo zypper --non-interactive addrepo \
+            https://download.opensuse.org/repositories/openSUSE:Tools/openSUSE_Tumbleweed/openSUSE:Tools.repo \
+            || true
+          sudo zypper --non-interactive --gpg-auto-import-keys refresh
+          sudo zypper --non-interactive install osc
+          # Configure osc credentials
+          mkdir -p ~/.config/osc
+          cat > ~/.config/osc/oscrc << EOF
+          [general]
+          apiurl = https://api.opensuse.org
+          [https://api.opensuse.org]
+          user = ${{ secrets.OBS_USERNAME }}
+          pass = ${{ secrets.OBS_PASSWORD }}
+          EOF
+
+      - name: Submit teleport package to OBS
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          OBS_PROJECT: ${{ secrets.OBS_PROJECT }}
+        run: |
+          OSC_DIR=$(mktemp -d)
+          osc co "$OBS_PROJECT" teleport -o "$OSC_DIR/teleport"
+
+          # Update _service: set the revision to the new tag
+          sed -i "s|<param name=\"revision\">.*</param>|<param name=\"revision\">$TAG</param>|" \
+            "$OSC_DIR/teleport/_service"
+          # Update the webassets download URL
+          sed -i "s|/releases/download/v[^/]*/teleport-[^\"]*-webassets|/releases/download/$TAG/teleport-${VERSION}-webassets|g" \
+            "$OSC_DIR/teleport/_service"
+          sed -i "s|/releases/download/v[^/]*/teleport-[^\"]*-fdpass-vendor|/releases/download/$TAG/teleport-${VERSION}-fdpass-vendor|g" \
+            "$OSC_DIR/teleport/_service"
+          # For Ubuntu: update fdpass binary URLs
+          sed -i "s|/releases/download/v[^/]*/fdpass-teleport-linux|/releases/download/$TAG/fdpass-teleport-linux|g" \
+            "$OSC_DIR/teleport/_service"
+
+          # Update spec Version:
+          sed -i "s/^Version: .*/Version: $VERSION/" \
+            "$OSC_DIR/teleport/teleport.spec"
+
+          # Update debian changelog
+          DATE=$(date -R)
+          MAINTAINER="Teleport Autobuild <noreply@github.com>"
+          ENTRY="teleport ($VERSION-1) unstable; urgency=medium\n\n  * Automated build from upstream $TAG\n\n -- $MAINTAINER  $DATE\n\n"
+          sed -i "1s|^|$ENTRY|" "$OSC_DIR/teleport/debian/changelog"
+
+          cd "$OSC_DIR/teleport"
+          osc addremove
+          osc commit -m "Automated update to $TAG"
+
+      - name: Submit teleport-container package to OBS
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          OBS_PROJECT: ${{ secrets.OBS_PROJECT }}
+        run: |
+          OSC_DIR=$(mktemp -d)
+          osc co "$OBS_PROJECT" teleport-container -o "$OSC_DIR/teleport-container"
+
+          # Update KIWI image version
+          sed -i "s|<version>.*</version>|<version>$VERSION</version>|" \
+            "$OSC_DIR/teleport-container/config.xml"
+
+          cd "$OSC_DIR/teleport-container"
+          osc addremove
+          osc commit -m "Automated update to $TAG"

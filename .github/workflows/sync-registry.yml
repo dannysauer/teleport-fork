@@ -1,0 +1,172 @@
+name: Sync OBS registry to ghcr.io
+
+# Triggered two ways:
+#
+# 1. OBS calls workflow_dispatch when a container build completes.
+#    OBS stores a fine-grained GitHub PAT with *only* Actions:write permission
+#    on this repo. That token cannot read code, push packages, or do anything
+#    else — so there is no meaningful security risk in OBS holding it.
+#
+# 2. Scheduled polling every 15 minutes as a fallback in case the OBS webhook
+#    is delayed or missed.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *'
+
+permissions:
+  packages: write   # push to ghcr.io via GITHUB_TOKEN
+  contents: write   # commit Helm chart version updates
+
+env:
+  OBS_IMAGE: registry.opensuse.org/home/dannysauer/teleport/teleport/teleport
+  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/teleport
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install skopeo
+        run: sudo apt-get install -y skopeo
+
+      - name: Get latest tag from OBS registry
+        id: obs
+        run: |
+          # OBS publishes the image with a version label we can inspect without pulling.
+          # The image is public — no credentials needed.
+          INFO=$(skopeo inspect "docker://${{ env.OBS_IMAGE }}:latest" 2>/dev/null || echo "{}")
+          OBS_VERSION=$(echo "$INFO" | jq -r '.Labels["org.opencontainers.image.version"] // empty')
+
+          if [ -z "$OBS_VERSION" ]; then
+            echo "Could not determine OBS image version — skipping"
+            echo "version=" >> "$GITHUB_OUTPUT"
+          else
+            echo "OBS image version: $OBS_VERSION"
+            echo "version=$OBS_VERSION" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get current ghcr.io version
+        id: ghcr
+        run: |
+          INFO=$(skopeo inspect --no-creds "docker://${{ env.GHCR_IMAGE }}:latest" 2>/dev/null || echo "{}")
+          GHCR_VERSION=$(echo "$INFO" | jq -r '.Labels["org.opencontainers.image.version"] // empty')
+          echo "ghcr version: ${GHCR_VERSION:-none}"
+          echo "version=${GHCR_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether to sync
+        id: decision
+        run: |
+          OBS="${{ steps.obs.outputs.version }}"
+          GHCR="${{ steps.ghcr.outputs.version }}"
+          if [ -z "$OBS" ]; then
+            echo "No OBS version available — nothing to do"
+            echo "sync=false" >> "$GITHUB_OUTPUT"
+          elif [ "$OBS" = "$GHCR" ]; then
+            echo "ghcr.io is already at $OBS — nothing to do"
+            echo "sync=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Will sync $OBS from OBS → ghcr.io (current: ${GHCR:-none})"
+            echo "sync=true" >> "$GITHUB_OUTPUT"
+            echo "version=$OBS" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to ghcr.io
+        if: steps.decision.outputs.sync == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy image from OBS to ghcr.io (all architectures)
+        if: steps.decision.outputs.sync == 'true'
+        env:
+          VERSION: ${{ steps.decision.outputs.version }}
+        run: |
+          # skopeo copy preserves the multi-arch manifest if OBS published one.
+          skopeo copy \
+            --all \
+            "docker://${{ env.OBS_IMAGE }}:latest" \
+            "docker://${{ env.GHCR_IMAGE }}:${VERSION}"
+
+          skopeo copy \
+            --all \
+            "docker://${{ env.OBS_IMAGE }}:latest" \
+            "docker://${{ env.GHCR_IMAGE }}:latest"
+
+          echo "Synced $VERSION to ghcr.io"
+
+      - name: Checkout autobuild branch (for Helm charts source path)
+        if: steps.decision.outputs.sync == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: autobuild
+
+      - name: Checkout master branch (contains Helm chart source)
+        if: steps.decision.outputs.sync == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          path: teleport-src
+
+      - name: Set up Helm
+        if: steps.decision.outputs.sync == 'true'
+        uses: azure/setup-helm@v4
+
+      - name: Package and push Helm charts
+        if: steps.decision.outputs.sync == 'true'
+        env:
+          VERSION: ${{ steps.decision.outputs.version }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+        run: |
+          mkdir -p helm-output
+
+          cd teleport-src
+
+          # Update the default image reference to point to our ghcr.io image
+          # instead of the upstream AWS ECR image.
+          # This is done on-the-fly — master is not modified.
+          OUR_IMAGE="ghcr.io/${GHCR_OWNER}/teleport"
+          sed -i "s|public.ecr.aws/gravitational/teleport-distroless|$OUR_IMAGE|g" \
+            examples/chart/teleport-cluster/values.yaml
+          sed -i "s|public.ecr.aws/gravitational/teleport-distroless|$OUR_IMAGE|g" \
+            examples/chart/teleport-kube-agent/values.yaml 2>/dev/null || true
+
+          # Update chart versions to match the image version
+          for chart_dir in \
+            examples/chart/teleport-cluster \
+            examples/chart/teleport-kube-agent \
+            examples/chart/tbot \
+            examples/chart/teleport-relay \
+            examples/chart/event-handler; do
+            [ -d "$chart_dir" ] || continue
+            # YAML anchor syntax used in Chart.yaml: replace the anchor value
+            sed -i "s/\\.version: &version \"[^\"]*\"/.version: \&version \"$VERSION\"/" \
+              "$chart_dir/Chart.yaml"
+            helm package "$chart_dir" \
+              --version "$VERSION" \
+              --app-version "$VERSION" \
+              -d ../helm-output/ \
+              2>/dev/null || echo "Warning: packaging $chart_dir failed, skipping"
+          done
+
+          cd ..
+
+          # Push charts to ghcr.io OCI registry
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          for chart in helm-output/*.tgz; do
+            [ -f "$chart" ] || continue
+            echo "Pushing $chart"
+            helm push "$chart" "oci://ghcr.io/${GHCR_OWNER}/charts"
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Registry sync result" >> "$GITHUB_STEP_SUMMARY"
+          echo "- OBS version: ${{ steps.obs.outputs.version || 'unknown' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- ghcr.io version before: ${{ steps.ghcr.outputs.version || 'none' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Synced: ${{ steps.decision.outputs.sync }}" >> "$GITHUB_STEP_SUMMARY"

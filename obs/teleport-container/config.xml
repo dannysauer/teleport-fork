@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<image schemaversion="7.5" name="teleport">
+  <description type="system">
+    <author>Teleport Autobuild</author>
+    <contact>noreply@github.com</contact>
+    <specification>
+      Teleport access proxy container image.
+      Built from the teleport RPM package in the same OBS project.
+      Mirrored to ghcr.io by sync-registry.yml after OBS publishes.
+    </specification>
+  </description>
+
+  <preferences>
+    <type image="docker">
+      <containerconfig name="teleport" tag="latest">
+        <entrypoint>
+          <argument name="/usr/bin/teleport"/>
+        </entrypoint>
+        <subcommand>
+          <argument name="start"/>
+          <argument name="--config=/etc/teleport/teleport.yaml"/>
+        </subcommand>
+        <expose>
+          <port number="3022" protocol="tcp"/>  <!-- SSH proxy -->
+          <port number="3023" protocol="tcp"/>  <!-- SSH client tunneling -->
+          <port number="3024" protocol="tcp"/>  <!-- SSH tunnel listener -->
+          <port number="3025" protocol="tcp"/>  <!-- Auth server -->
+          <port number="3080" protocol="tcp"/>  <!-- HTTPS / web UI -->
+        </expose>
+        <volumes>
+          <destination path="/var/lib/teleport"/>
+          <destination path="/etc/teleport"/>
+        </volumes>
+        <labels>
+          <label name="org.opencontainers.image.title" value="Teleport"/>
+          <label name="org.opencontainers.image.description"
+                 value="Identity-aware access proxy for infrastructure"/>
+          <label name="org.opencontainers.image.url"
+                 value="https://github.com/dannysauer/teleport-fork"/>
+          <label name="org.opencontainers.image.source"
+                 value="https://github.com/dannysauer/teleport-fork"/>
+          <label name="org.opencontainers.image.licenses" value="AGPL-3.0"/>
+          <!--
+            org.opencontainers.image.version is set by OBS automatically
+            from the <version> element below, and is what sync-registry.yml
+            reads to decide whether to push a new image to ghcr.io.
+          -->
+        </labels>
+      </containerconfig>
+    </type>
+    <!--
+      Version is updated by prep-obs-source.yml via osc.
+      Pin to a Tumbleweed snapshot for reproducibility — update this
+      periodically (e.g. when rebuilding for a new Teleport release) to
+      pick up base image security fixes.
+      Format: YYYYMMDD — check https://download.opensuse.org/history/
+    -->
+    <version>19.0.0</version>
+    <packagemanager>zypper</packagemanager>
+  </preferences>
+
+  <!--
+    Pull the teleport RPM from our OBS project repository.
+    OBS resolves obsrepositories:/ to the project's own published repos,
+    so the container always uses the freshly built teleport package.
+  -->
+  <repository type="rpm-md" alias="project" priority="1">
+    <source path="obsrepositories:/"/>
+  </repository>
+
+  <!--
+    Minimal Tumbleweed base.
+    Pinned snapshot avoids surprise base-image changes between builds.
+    Update the snapshot date when you want base security fixes.
+  -->
+  <repository type="rpm-md" alias="tumbleweed-oss">
+    <source path="https://download.opensuse.org/tumbleweed/repo/oss/"/>
+  </repository>
+
+  <!-- Bootstrap: the absolute minimum needed before zypper can install packages -->
+  <packages type="bootstrap">
+    <package name="filesystem"/>
+    <package name="glibc"/>
+    <package name="ca-certificates"/>
+    <package name="bash"/>
+    <package name="coreutils"/>
+  </packages>
+
+  <!-- Runtime: packages installed in the final image -->
+  <packages type="image">
+    <package name="teleport"/>
+    <package name="ca-certificates-mozilla"/>
+    <package name="libpam0"/>
+    <package name="libpcsclite1"/>   <!-- PIV / smart card support -->
+    <package name="curl"/>            <!-- health checks, webhook calls -->
+    <package name="tzdata"/>
+  </packages>
+
+  <!-- Remove packaging infrastructure not needed at runtime -->
+  <packages type="delete">
+    <package name="fillup"/>
+    <package name="update-alternatives"/>
+    <package name="rpm"/>
+    <package name="zypper"/>
+    <package name="libzypp"/>
+    <package name="pam-config"/>
+  </packages>
+</image>

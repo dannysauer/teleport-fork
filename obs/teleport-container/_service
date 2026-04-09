@@ -1,0 +1,13 @@
+<services>
+  <!--
+    Keep the KIWI image version in sync with the teleport package version.
+    The version element in config.xml is updated by prep-obs-source.yml via osc.
+    This _service file doesn't need to fetch source; it just ensures OBS
+    rebuilds the container when the teleport package in the project is updated.
+  -->
+  <service name="set_version">
+    <param name="basename">teleport</param>
+    <param name="fromfile">config.xml</param>
+    <param name="regex">&lt;version&gt;([^&lt;]+)&lt;/version&gt;</param>
+  </service>
+</services>

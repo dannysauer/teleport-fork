@@ -1,0 +1,81 @@
+#!/usr/bin/make -f
+
+# Ubuntu 24.04 ships Go 1.22 which is too old for Teleport 19.
+# We install Go 1.25 from a tarball bundled as a source file (downloaded
+# by the OBS _service download_url during the service phase).
+#
+# fdpass-teleport requires Rust 1.94 which is also too new for Ubuntu 24.04
+# repos. We use a pre-built binary downloaded by the OBS _service instead.
+
+include /usr/share/dpkg/architecture.mk
+
+GO_VERSION  := 1.25.9
+GOROOT      := $(CURDIR)/debian/go-toolchain
+GOPATH      := $(CURDIR)/debian/gopath
+BUILDDIR    := $(CURDIR)/debian/teleport-bin
+
+# Tarball names match what download_url fetches into the OBS source directory.
+# OBS places downloaded files one directory above the unpacked source.
+GO_TARBALL_amd64 := go$(GO_VERSION).linux-amd64.tar.gz
+GO_TARBALL_arm64 := go$(GO_VERSION).linux-arm64.tar.gz
+GO_TARBALL   := $(GO_TARBALL_$(DEB_HOST_ARCH))
+
+FDPASS_BIN_amd64 := fdpass-teleport-linux-amd64
+FDPASS_BIN_arm64 := fdpass-teleport-linux-arm64
+FDPASS_BIN   := $(FDPASS_BIN_$(DEB_HOST_ARCH))
+
+WEBASSETS_TARBALL := $(wildcard ../teleport-*-webassets.tar.gz)
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	# Install Go toolchain from bundled tarball
+	mkdir -p $(GOROOT)
+	tar xzf ../$(GO_TARBALL) -C $(GOROOT) --strip-components=1
+
+override_dh_auto_build:
+	# Extract pre-built webassets (contains webassets/ dir + oss-sha)
+	tar xzf $(WEBASSETS_TARBALL)
+
+	# Install pre-built fdpass-teleport (Rust too old in Ubuntu 24.04)
+	mkdir -p $(BUILDDIR)
+	install -m755 ../$(FDPASS_BIN) $(BUILDDIR)/fdpass-teleport
+
+	# Build the Go binaries
+	PATH=$(GOROOT)/bin:$(PATH) \
+	GOPATH=$(GOPATH) \
+	GOFLAGS="-mod=vendor" \
+	GOPROXY="off" \
+	GONOSUMCHECK="*" \
+	GONOSUMDB="*" \
+	$(MAKE) \
+	    OS=linux \
+	    ARCH=$(DEB_HOST_ARCH) \
+	    BUILDDIR=$(BUILDDIR) \
+	    WEBASSETS_SKIP_BUILD=0 \
+	    RDPCLIENT_SKIP_BUILD=1 \
+	    PIV=no \
+	    teleport tctl tsh tbot teleport-update
+
+override_dh_auto_install:
+	install -Dm755 $(BUILDDIR)/teleport        debian/teleport/usr/bin/teleport
+	install -Dm755 $(BUILDDIR)/tctl            debian/teleport/usr/bin/tctl
+	install -Dm755 $(BUILDDIR)/tsh             debian/teleport/usr/bin/tsh
+	install -Dm755 $(BUILDDIR)/tbot            debian/teleport/usr/bin/tbot
+	install -Dm755 $(BUILDDIR)/fdpass-teleport debian/teleport/usr/bin/fdpass-teleport
+	install -Dm755 $(BUILDDIR)/teleport-update debian/teleport/usr/bin/teleport-update
+	install -Dm644 examples/systemd/teleport.service \
+	    debian/teleport/lib/systemd/system/teleport.service
+	install -dm700 debian/teleport/etc/teleport
+	install -dm700 debian/teleport/var/lib/teleport
+
+override_dh_auto_test:
+	# Skip upstream tests — they require a full cluster environment
+
+override_dh_dwz:
+	# Skip dwz — Go binaries don't benefit from it
+
+override_dh_strip:
+	# Skip stripping — Go binaries have their own mechanism;
+	# stripping can break some Go reflection-based features

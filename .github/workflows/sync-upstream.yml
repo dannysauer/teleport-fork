@@ -1,0 +1,84 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # every 6 hours
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      new_tags: ${{ steps.push-tags.outputs.new_tags }}
+
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/gravitational/teleport.git
+
+      - name: Fetch upstream
+        run: |
+          git fetch upstream --tags --no-recurse-submodules
+
+      - name: Check if master needs updating
+        id: check
+        run: |
+          LOCAL=$(git rev-parse HEAD)
+          UPSTREAM=$(git rev-parse upstream/master)
+          if [ "$LOCAL" = "$UPSTREAM" ]; then
+            echo "master is already up to date"
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync master branch
+        if: steps.check.outputs.needs_update == 'true'
+        run: |
+          # master is always a clean upstream mirror — force push is safe and intended.
+          # Patches (if any) live in patches/ on this branch and are applied at build time.
+          git push origin upstream/master:refs/heads/master --force
+
+      - name: Push new tags
+        id: push-tags
+        run: |
+          # Collect tags that exist upstream but not in origin
+          UPSTREAM_TAGS=$(git tag --merged upstream/master | sort -V)
+          ORIGIN_TAGS=$(git ls-remote --tags origin | awk '{print $2}' | sed 's|refs/tags/||' | sed 's|\^{}||' | sort -V | uniq)
+
+          NEW_TAGS=""
+          for tag in $UPSTREAM_TAGS; do
+            if ! echo "$ORIGIN_TAGS" | grep -qx "$tag"; then
+              NEW_TAGS="$NEW_TAGS $tag"
+            fi
+          done
+          NEW_TAGS="${NEW_TAGS# }"  # trim leading space
+
+          if [ -n "$NEW_TAGS" ]; then
+            echo "Pushing new tags: $NEW_TAGS"
+            for tag in $NEW_TAGS; do
+              git push origin "refs/tags/$tag"
+            done
+            # Output just the latest new tag for job summary
+            LATEST=$(echo "$NEW_TAGS" | tr ' ' '\n' | sort -V | tail -1)
+            echo "new_tags=$LATEST" >> "$GITHUB_OUTPUT"
+          else
+            echo "No new tags to push"
+            echo "new_tags=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Summary
+        run: |
+          echo "### Sync result" >> "$GITHUB_STEP_SUMMARY"
+          echo "- master updated: ${{ steps.check.outputs.needs_update }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Latest new tag: ${{ steps.push-tags.outputs.new_tags || 'none' }}" >> "$GITHUB_STEP_SUMMARY"
