@@ -57,49 +57,48 @@ RPM repository so it can install `teleport` into the container image.
 
 ## 4. Create the `teleport` package in OBS
 
-In your OBS project, create a new package named **`teleport`** and upload every
-file from `obs/teleport/` in this repository:
+In your OBS project, create a new package named **`teleport`** and upload
+**only `obs/teleport/_service`**.  That is the only file OBS needs from you.
 
-```
-obs/teleport/_service
-obs/teleport/teleport.spec
-obs/teleport/debian/changelog
-obs/teleport/debian/compat
-obs/teleport/debian/control
-obs/teleport/debian/copyright
-obs/teleport/debian/rules
-```
+When OBS runs the service for the first time, it will:
+- Fetch the Teleport source tarball from the `master` branch
+- Fetch `teleport.spec` and `debian/` directly from the `autobuild` branch
+- Vendor Go modules
+- Download pre-built web assets and fdpass binaries from the `build-assets` release
 
-You can use the OBS web UI (upload files one at a time) or the `osc` CLI:
+You can upload `_service` via the OBS web UI or the `osc` CLI:
 
 ```bash
 osc checkout home:YOU:teleport
-cp -r obs/teleport/* home:YOU:teleport/teleport/
+cp obs/teleport/_service home:YOU:teleport/teleport/
 cd home:YOU:teleport/teleport
-osc addremove
-osc commit -m "initial import"
+osc add _service
+osc commit -m "bootstrap teleport package"
 ```
 
-> **Note:** The `_service` file references `github.com/YOU/teleport-fork`.
-> Update the `<param name="url">` in `obs/teleport/_service` to point to your
-> fork before uploading, or edit it directly in the OBS web UI afterward.
+> **Note:** The `_service` file references `github.com/dannysauer/teleport-fork`.
+> If you are reproducing this under your own account, update the
+> `<param name="url">` values before uploading.
 
 ---
 
 ## 5. Create the `teleport-container` package in OBS
 
-Create a second package named **`teleport-container`** and upload the files from
-`obs/teleport-container/`:
+Create a second package named **`teleport-container`** and upload
+**only `obs/teleport-container/_service`**.  The service will fetch
+`config.xml` and `config.sh` from the `autobuild` branch at run time.
 
-```
-obs/teleport-container/_service
-obs/teleport-container/config.xml
-obs/teleport-container/config.sh
+```bash
+osc checkout home:YOU:teleport
+cp obs/teleport-container/_service home:YOU:teleport/teleport-container/
+cd home:YOU:teleport/teleport-container
+osc add _service
+osc commit -m "bootstrap teleport-container package"
 ```
 
-The container build depends on the `teleport` RPM package being available in
-the `openSUSE_Tumbleweed` repository of your project, so the `teleport` package
-must build successfully first.
+The container build depends on the `teleport` RPM being available in the
+`openSUSE_Tumbleweed` repository of your project, so `teleport` must build
+successfully first.
 
 ---
 
@@ -179,19 +178,19 @@ Push any commit to the `autobuild` branch (or use **Actions → Run workflow** o
 ## What you still need if you are `dannysauer`
 
 If you have already forked the repo and set the default branch, you only need
-to complete steps 4–6 (populate the OBS packages and create the trigger token)
-and then add the token as the `OBS_TRIGGER_TOKEN` GitHub secret.  The
-workflows and OBS `_service` files already reference the correct repository and
-OBS project.
+to complete steps 4–6 (create the OBS packages, upload each `_service` file,
+and create the trigger token) and then add the token as the `OBS_TRIGGER_TOKEN`
+GitHub secret.  The workflows and `_service` files already reference the correct
+repository and OBS project.
 
-Specifically, upload these files to your existing `home:dannysauer:teleport`
-project:
+To summarise the minimum remaining work:
 
-- `obs/teleport/_service`, `teleport.spec`, `debian/` directory → into the
-  **`teleport`** package
-- `obs/teleport-container/_service`, `config.xml`, `config.sh` → into the
-  **`teleport-container`** package
+1. In `home:dannysauer:teleport`, create package **`teleport`** and upload
+   `obs/teleport/_service`.
+2. Create package **`teleport-container`** and upload
+   `obs/teleport-container/_service`.
+3. Create an OBS trigger token (step 6) and add it as `OBS_TRIGGER_TOKEN` in
+   GitHub Secrets.
 
-Then create a trigger token (step 6) and add it to GitHub Secrets.  Once those
-are in place, run the `sync-upstream.yml` workflow manually to kick off the
-first full build.
+Then run the `sync-upstream.yml` workflow manually to kick off the first full
+build.

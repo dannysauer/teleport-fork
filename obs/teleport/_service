@@ -23,6 +23,26 @@
   </service>
 
   <!--
+    Fetch packaging files from the autobuild branch and extract them
+    directly into the OBS package source directory.  This means only
+    _service itself needs to be uploaded to OBS to bootstrap a package —
+    the spec and debian/ files are kept in Git alongside everything else.
+  -->
+  <service name="obs_scm">
+    <param name="url">https://github.com/dannysauer/teleport-fork</param>
+    <param name="scm">git</param>
+    <param name="revision">autobuild</param>
+    <param name="subdir">obs/teleport</param>
+    <param name="filename">packaging</param>
+    <param name="extract">teleport.spec</param>
+    <param name="extract">debian/changelog</param>
+    <param name="extract">debian/compat</param>
+    <param name="extract">debian/control</param>
+    <param name="extract">debian/copyright</param>
+    <param name="extract">debian/rules</param>
+  </service>
+
+  <!--
     Vendor all Go module dependencies.
     Runs during the OBS service phase (which has network access).
     Result is a vendor/ directory added to the source tarball.
