@@ -91,8 +91,16 @@ flowchart TD
 ## Patching upstream
 
 The `patches/` directory holds `.patch` files applied on top of upstream before
-building. It is currently empty — these are unmodified upstream builds. See
-[patches/README.md](patches/README.md) for how to add patches.
+building. See [patches/README.md](patches/README.md) for how to add patches.
+
+## Licensing
+
+The Teleport source code is licensed under AGPL-3.0 by Gravitational, Inc.
+(with the `api/` package under Apache-2.0).
+
+All files written from scratch in this repository — CI workflows, OBS packaging
+specs, container configs, and patch files — are licensed under the
+**Apache License, Version 2.0**. See [LICENSE](LICENSE) for details.
 
 ## Reproducing this setup
 

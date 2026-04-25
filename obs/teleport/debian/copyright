@@ -3,6 +3,10 @@ Upstream-Name: teleport
 Upstream-Contact: https://github.com/gravitational/teleport
 Source: https://github.com/gravitational/teleport
 
+Files: debian/*
+Copyright: 2025 Danny Sauer and contributors
+License: Apache-2.0
+
 Files: *
 Copyright: 2016-2026 Gravitational, Inc.
 License: AGPL-3.0-only

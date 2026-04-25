@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2025 Danny Sauer and contributors -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 <image schemaversion="7.5" name="teleport">
   <description type="system">
     <author>Teleport Autobuild</author>

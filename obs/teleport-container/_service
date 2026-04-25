@@ -1,3 +1,5 @@
+<!-- Copyright 2025 Danny Sauer and contributors -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 <services>
   <!--
     Fetch KIWI config files from the autobuild branch and extract them

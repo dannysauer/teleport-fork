@@ -1,3 +1,9 @@
+# Copyright 2025 Danny Sauer and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# This spec file is licensed under Apache-2.0.
+# The Teleport software it packages is licensed under AGPL-3.0-only.
+
 %global debug_package %{nil}
 
 # Translate RPM arch names to Go arch names

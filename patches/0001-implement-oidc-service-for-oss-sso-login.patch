@@ -1,3 +1,16 @@
+diff --git a/lib/auth/oidc.go b/lib/auth/oidc.go
+index 00557fddd5..0bb6e0d031 100644
+--- a/lib/auth/oidc.go
++++ b/lib/auth/oidc.go
+@@ -37,7 +37,7 @@ type OIDCService interface {
+ 	ValidateOIDCAuthCallback(ctx context.Context, q url.Values) (*authclient.OIDCAuthResponse, error)
+ }
+ 
+-var errOIDCNotImplemented = &trace.AccessDeniedError{Message: "OIDC is only available in enterprise subscriptions"}
++var errOIDCNotImplemented = &trace.AccessDeniedError{Message: "OIDC authentication service is not initialized"}
+ 
+ // UpsertOIDCConnector creates or updates an OIDC connector.
+ func (a *Server) UpsertOIDCConnector(ctx context.Context, connector types.OIDCConnector) (types.OIDCConnector, error) {
 diff --git a/lib/service/service.go b/lib/service/service.go
 index 045206c073..a28d0ba00b 100644
 --- a/lib/service/service.go
@@ -187,27 +200,23 @@ index e1f99689a7..331ebaa65a 100644
  // The function formats a redirect path with the device ID and token from the provided DeviceWebToken.
 diff --git a/lib/auth/oidc_service.go b/lib/auth/oidc_service.go
 new file mode 100644
-index 0000000000..cf54b0a872
+index 0000000000..01fdf9266d
 --- /dev/null
 +++ b/lib/auth/oidc_service.go
-@@ -0,0 +1,552 @@
-+/*
-+ * Teleport
-+ * Copyright (C) 2023  Gravitational, Inc.
-+ *
-+ * This program is free software: you can redistribute it and/or modify
-+ * it under the terms of the GNU Affero General Public License as published by
-+ * the Free Software Foundation, either version 3 of the License, or
-+ * (at your option) any later version.
-+ *
-+ * This program is distributed in the hope that it will be useful,
-+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
-+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-+ * GNU Affero General Public License for more details.
-+ *
-+ * You should have received a copy of the GNU Affero General Public License
-+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
-+ */
+@@ -0,0 +1,548 @@
++// Copyright 2025 Danny Sauer and contributors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
 +
 +package auth
 +
@@ -742,4 +751,223 @@ index 0000000000..cf54b0a872
 +	}
 +
 +	return &auth, nil
++}
+diff --git a/lib/auth/oidc_service_test.go b/lib/auth/oidc_service_test.go
+new file mode 100644
+index 0000000000..0878dcde24
+--- /dev/null
++++ b/lib/auth/oidc_service_test.go
+@@ -0,0 +1,213 @@
++// Copyright 2025 Danny Sauer and contributors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package auth
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++	"github.com/zitadel/oidc/v3/pkg/oidc"
++
++	"github.com/gravitational/teleport/api/types"
++)
++
++func TestClaimValueToStringSlice(t *testing.T) {
++	tests := []struct {
++		name string
++		in   any
++		want []string
++	}{
++		{name: "string", in: "alice", want: []string{"alice"}},
++		{name: "[]string", in: []string{"a", "b"}, want: []string{"a", "b"}},
++		{name: "[]any strings", in: []any{"x", "y"}, want: []string{"x", "y"}},
++		{name: "[]any mixed", in: []any{"a", 42}, want: []string{"a", "42"}},
++		{name: "int", in: 7, want: []string{"7"}},
++		{name: "bool", in: true, want: []string{"true"}},
++		{name: "float64", in: 3.14, want: []string{"3.14"}},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			got := claimValueToStringSlice(tt.in)
++			assert.Equal(t, tt.want, got)
++		})
++	}
++}
++
++func TestExtractUsername(t *testing.T) {
++	svc := &ossOIDCService{}
++
++	t.Run("custom username_claim", func(t *testing.T) {
++		conn := newTestOIDCConnector(t, "custom", types.OIDCConnectorSpecV3{
++			IssuerURL:     "https://example.com",
++			ClientID:      "id",
++			ClientSecret:  "secret",
++			RedirectURLs:  []string{"https://proxy.example.com/v1/webapi/oidc/callback"},
++			ClaimsToRoles: []types.ClaimMapping{{Claim: "groups", Value: "*", Roles: []string{"access"}}},
++			UsernameClaim: "nickname",
++		})
++		claims := map[string][]string{
++			"sub":                {"sub-123"},
++			"preferred_username": {"alice"},
++			"email":             {"alice@example.com"},
++			"nickname":          {"coolalice"},
++		}
++		assert.Equal(t, "coolalice", svc.extractUsername(conn, claims))
++	})
++
++	t.Run("custom claim missing falls through to preferred_username", func(t *testing.T) {
++		conn := newTestOIDCConnector(t, "missing-custom", types.OIDCConnectorSpecV3{
++			IssuerURL:     "https://example.com",
++			ClientID:      "id",
++			ClientSecret:  "secret",
++			RedirectURLs:  []string{"https://proxy.example.com/v1/webapi/oidc/callback"},
++			ClaimsToRoles: []types.ClaimMapping{{Claim: "groups", Value: "*", Roles: []string{"access"}}},
++			UsernameClaim: "nickname",
++		})
++		claims := map[string][]string{
++			"sub":                {"sub-123"},
++			"preferred_username": {"alice"},
++			"email":             {"alice@example.com"},
++		}
++		assert.Equal(t, "alice", svc.extractUsername(conn, claims))
++	})
++
++	t.Run("fallback preferred_username", func(t *testing.T) {
++		conn := newTestOIDCConnector(t, "no-claim", types.OIDCConnectorSpecV3{
++			IssuerURL:     "https://example.com",
++			ClientID:      "id",
++			ClientSecret:  "secret",
++			RedirectURLs:  []string{"https://proxy.example.com/v1/webapi/oidc/callback"},
++			ClaimsToRoles: []types.ClaimMapping{{Claim: "groups", Value: "*", Roles: []string{"access"}}},
++		})
++		claims := map[string][]string{
++			"sub":                {"sub-123"},
++			"preferred_username": {"alice"},
++			"email":             {"alice@example.com"},
++		}
++		assert.Equal(t, "alice", svc.extractUsername(conn, claims))
++	})
++
++	t.Run("fallback email when preferred_username missing", func(t *testing.T) {
++		conn := newTestOIDCConnector(t, "email-fallback", types.OIDCConnectorSpecV3{
++			IssuerURL:     "https://example.com",
++			ClientID:      "id",
++			ClientSecret:  "secret",
++			RedirectURLs:  []string{"https://proxy.example.com/v1/webapi/oidc/callback"},
++			ClaimsToRoles: []types.ClaimMapping{{Claim: "groups", Value: "*", Roles: []string{"access"}}},
++		})
++		claims := map[string][]string{
++			"sub":   {"sub-123"},
++			"email": {"alice@example.com"},
++		}
++		assert.Equal(t, "alice@example.com", svc.extractUsername(conn, claims))
++	})
++
++	t.Run("fallback sub when all else missing", func(t *testing.T) {
++		conn := newTestOIDCConnector(t, "sub-fallback", types.OIDCConnectorSpecV3{
++			IssuerURL:     "https://example.com",
++			ClientID:      "id",
++			ClientSecret:  "secret",
++			RedirectURLs:  []string{"https://proxy.example.com/v1/webapi/oidc/callback"},
++			ClaimsToRoles: []types.ClaimMapping{{Claim: "groups", Value: "*", Roles: []string{"access"}}},
++		})
++		claims := map[string][]string{
++			"sub": {"sub-123"},
++		}
++		assert.Equal(t, "sub-123", svc.extractUsername(conn, claims))
++	})
++
++	t.Run("empty claims returns empty string", func(t *testing.T) {
++		conn := newTestOIDCConnector(t, "empty", types.OIDCConnectorSpecV3{
++			IssuerURL:     "https://example.com",
++			ClientID:      "id",
++			ClientSecret:  "secret",
++			RedirectURLs:  []string{"https://proxy.example.com/v1/webapi/oidc/callback"},
++			ClaimsToRoles: []types.ClaimMapping{{Claim: "groups", Value: "*", Roles: []string{"access"}}},
++		})
++		assert.Equal(t, "", svc.extractUsername(conn, map[string][]string{}))
++	})
++}
++
++func TestClaimsFromIDToken(t *testing.T) {
++	svc := &ossOIDCService{}
++
++	t.Run("all standard claims present", func(t *testing.T) {
++		idClaims := &oidc.IDTokenClaims{
++			TokenClaims: oidc.TokenClaims{
++				Subject: "sub-123",
++			},
++		}
++		idClaims.PreferredUsername = "alice"
++		idClaims.Email = "alice@example.com"
++		idClaims.Name = "Alice Smith"
++		idClaims.Claims = map[string]any{
++			"groups": []any{"admin", "users"},
++		}
++
++		claims := svc.claimsFromIDToken(idClaims)
++
++		assert.Equal(t, []string{"sub-123"}, claims["sub"])
++		assert.Equal(t, []string{"alice"}, claims["preferred_username"])
++		assert.Equal(t, []string{"alice@example.com"}, claims["email"])
++		assert.Equal(t, []string{"Alice Smith"}, claims["name"])
++		assert.Equal(t, []string{"admin", "users"}, claims["groups"])
++	})
++
++	t.Run("only subject", func(t *testing.T) {
++		idClaims := &oidc.IDTokenClaims{
++			TokenClaims: oidc.TokenClaims{
++				Subject: "sub-456",
++			},
++		}
++
++		claims := svc.claimsFromIDToken(idClaims)
++
++		assert.Equal(t, []string{"sub-456"}, claims["sub"])
++		assert.NotContains(t, claims, "preferred_username")
++		assert.NotContains(t, claims, "email")
++		assert.NotContains(t, claims, "name")
++	})
++
++	t.Run("custom claims included", func(t *testing.T) {
++		idClaims := &oidc.IDTokenClaims{
++			TokenClaims: oidc.TokenClaims{
++				Subject: "sub-789",
++			},
++		}
++		idClaims.Claims = map[string]any{
++			"department": "engineering",
++			"team":       []any{"backend", "infra"},
++		}
++
++		claims := svc.claimsFromIDToken(idClaims)
++
++		assert.Equal(t, []string{"engineering"}, claims["department"])
++		assert.Equal(t, []string{"backend", "infra"}, claims["team"])
++	})
++
++	t.Run("empty subject omitted", func(t *testing.T) {
++		idClaims := &oidc.IDTokenClaims{}
++		claims := svc.claimsFromIDToken(idClaims)
++		assert.NotContains(t, claims, "sub")
++	})
++}
++
++func newTestOIDCConnector(t *testing.T, name string, spec types.OIDCConnectorSpecV3) types.OIDCConnector {
++	t.Helper()
++	conn, err := types.NewOIDCConnector(name, spec)
++	require.NoError(t, err)
++	return conn
 +}
