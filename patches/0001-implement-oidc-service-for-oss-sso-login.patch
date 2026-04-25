@@ -1,0 +1,740 @@
+diff --git a/lib/service/service.go b/lib/service/service.go
+index 045206c073..a28d0ba00b 100644
+--- a/lib/service/service.go
++++ b/lib/service/service.go
+@@ -2543,6 +2543,8 @@ func (process *TeleportProcess) initAuthService() error {
+ 	}
+ 	authServer.SetLockWatcher(lockWatcher)
+ 
++	authServer.SetOIDCService(auth.NewOSSOIDCService(authServer))
++
+ 	if externalAuditStorage.IsUsed() {
+ 		externalAuditStorage.SetGenerateOIDCTokenFn(authServer.GenerateExternalAuditStorageOIDCToken)
+ 	}
+diff --git a/lib/web/apiserver.go b/lib/web/apiserver.go
+index e1f99689a7..331ebaa65a 100644
+--- a/lib/web/apiserver.go
++++ b/lib/web/apiserver.go
+@@ -1040,6 +1040,11 @@ func (h *Handler) bindDefaultEndpoints() {
+ 	h.GET("/webapi/github/callback", h.WithMetaRedirect(h.githubCallback))
+ 	h.POST("/webapi/github/login/console", h.WithLimiter(h.githubLoginConsole))
+ 
++	// OIDC connector handlers
++	h.GET("/webapi/oidc/login/web", h.WithRedirect(h.oidcLoginWeb))
++	h.GET("/webapi/oidc/callback", h.WithMetaRedirect(h.oidcCallback))
++	h.POST("/webapi/oidc/login/console", h.WithLimiter(h.oidcLoginConsole))
++
+ 	// MFA public endpoints.
+ 	h.POST("/webapi/sites/:site/mfa/required", h.WithClusterAuth(h.isMFARequired))
+ 	h.POST("/webapi/mfa/login/begin", h.WithLimiter(h.mfaLoginBegin))
+@@ -2572,6 +2577,157 @@ func (h *Handler) githubCallback(w http.ResponseWriter, r *http.Request, p httpr
+ 	return redirectURL.String()
+ }
+ 
++func (h *Handler) oidcLoginWeb(w http.ResponseWriter, r *http.Request, p httprouter.Params) string {
++	logger := h.logger.With("auth", "oidc")
++	logger.DebugContext(r.Context(), "Web login start")
++
++	req, err := ParseSSORequestParams(r)
++	if err != nil {
++		logger.ErrorContext(r.Context(), "Failed to extract SSO parameters from request", "error", err)
++		return sso.LoginFailedRedirectURL
++	}
++
++	remoteAddr, _, err := net.SplitHostPort(r.RemoteAddr)
++	if err != nil {
++		logger.ErrorContext(r.Context(), "Failed to parse request remote address", "error", err)
++		return sso.LoginFailedRedirectURL
++	}
++
++	response, err := h.cfg.ProxyClient.CreateOIDCAuthRequest(r.Context(), types.OIDCAuthRequest{
++		CSRFToken:         req.CSRFToken,
++		ConnectorID:       req.ConnectorID,
++		CreateWebSession:  true,
++		ClientRedirectURL: req.ClientRedirectURL,
++		ClientLoginIP:     remoteAddr,
++		ClientUserAgent:   r.UserAgent(),
++	})
++	if err != nil {
++		logger.ErrorContext(r.Context(), "Error creating auth request", "error", err)
++		return sso.LoginFailedRedirectURL
++	}
++
++	return response.RedirectURL
++}
++
++func (h *Handler) oidcLoginConsole(w http.ResponseWriter, r *http.Request, p httprouter.Params) (any, error) {
++	logger := h.logger.With("auth", "oidc")
++	logger.DebugContext(r.Context(), "Console login start")
++
++	req := new(client.SSOLoginConsoleReq)
++	if err := httplib.ReadResourceJSON(r, req); err != nil {
++		logger.ErrorContext(r.Context(), "Error reading json", "error", err)
++		return nil, trace.AccessDenied("%s", SSOLoginFailureMessage)
++	}
++
++	if err := req.CheckAndSetDefaults(); err != nil {
++		logger.ErrorContext(r.Context(), "Missing request parameters", "error", err)
++		return nil, trace.AccessDenied("%s", SSOLoginFailureMessage)
++	}
++
++	remoteAddr, _, err := net.SplitHostPort(r.RemoteAddr)
++	if err != nil {
++		logger.ErrorContext(r.Context(), "Failed to parse request remote address", "error", err)
++		return nil, trace.AccessDenied("%s", SSOLoginFailureMessage)
++	}
++
++	response, err := h.cfg.ProxyClient.CreateOIDCAuthRequest(r.Context(), types.OIDCAuthRequest{
++		ConnectorID:             req.ConnectorID,
++		SshPublicKey:            req.SSHPubKey,
++		TlsPublicKey:            req.TLSPubKey,
++		SshAttestationStatement: req.SSHAttestationStatement.ToProto(),
++		TlsAttestationStatement: req.TLSAttestationStatement.ToProto(),
++		CertTTL:                 req.CertTTL,
++		ClientRedirectURL:       req.RedirectURL,
++		Compatibility:           req.Compatibility,
++		RouteToCluster:          req.RouteToCluster,
++		KubernetesCluster:       req.KubernetesCluster,
++		ClientLoginIP:           remoteAddr,
++		Scope:                   req.Scope,
++	})
++	if err != nil {
++		logger.ErrorContext(r.Context(), "Failed to create OIDC auth request", "error", err)
++		if strings.Contains(err.Error(), auth.InvalidClientRedirectErrorMessage) {
++			return nil, trace.AccessDenied("%s", SSOLoginFailureInvalidRedirect)
++		}
++		return nil, trace.AccessDenied("%s", SSOLoginFailureMessage)
++	}
++
++	return &client.SSOLoginConsoleResponse{
++		RedirectURL: response.RedirectURL,
++	}, nil
++}
++
++func (h *Handler) oidcCallback(w http.ResponseWriter, r *http.Request, p httprouter.Params) string {
++	logger := h.logger.With("auth", "oidc")
++	logger.DebugContext(r.Context(), "Callback start", "query", r.URL.Query())
++
++	response, err := h.cfg.ProxyClient.ValidateOIDCAuthCallback(r.Context(), r.URL.Query())
++	if err != nil {
++		logger.ErrorContext(r.Context(), "Error while processing callback", "error", err)
++
++		if requestID := r.URL.Query().Get("state"); requestID != "" {
++			if request, errGet := h.cfg.ProxyClient.GetOIDCAuthRequest(r.Context(), requestID); errGet == nil && !request.CreateWebSession {
++				if redURL, errEnc := RedirectURLWithError(request.ClientRedirectURL, err); errEnc == nil {
++					return redURL.String()
++				}
++			}
++		}
++
++		return sso.LoginFailedBadCallbackRedirectURL
++	}
++
++	if response.Req.CreateWebSession {
++		logger.InfoContext(r.Context(), "Redirecting to web browser")
++
++		res := &SSOCallbackResponse{
++			CSRFToken:         response.Req.CSRFToken,
++			Username:          response.Username,
++			SessionName:       response.Session.GetName(),
++			SessionExpiry:     response.Session.Expiry(),
++			ClientRedirectURL: response.Req.ClientRedirectURL,
++		}
++
++		if err := SSOSetWebSessionAndRedirectURL(w, r, res, true); err != nil {
++			logger.ErrorContext(r.Context(), "Error setting web session.", "error", err)
++			return sso.LoginFailedRedirectURL
++		}
++
++		if dwt := response.Session.GetDeviceWebToken(); dwt != nil {
++			logger.DebugContext(r.Context(), "OIDC WebSession created with device web token")
++			redirectPath, err := BuildDeviceWebRedirectPath(dwt, res.ClientRedirectURL)
++			if err != nil {
++				logger.DebugContext(r.Context(), "Invalid device web token", "error", err)
++			}
++			return redirectPath
++		}
++		return res.ClientRedirectURL
++	}
++
++	logger.InfoContext(r.Context(), "Callback is redirecting to console login")
++	if len(response.Req.SSHPubKey)+len(response.Req.TLSPubKey) == 0 {
++		logger.ErrorContext(r.Context(), "Not a web or console login request")
++		return sso.LoginFailedRedirectURL
++	}
++
++	redirectURL, err := ConstructSSHResponse(AuthParams{
++		ClientRedirectURL: response.Req.ClientRedirectURL,
++		Username:          response.Username,
++		Identity:          response.Identity,
++		Session:           response.Session,
++		Cert:              response.Cert,
++		TLSCert:           response.TLSCert,
++		HostSigners:       response.HostSigners,
++		FIPS:              h.cfg.FIPS,
++		ClientOptions:     response.ClientOptions,
++	})
++	if err != nil {
++		logger.ErrorContext(r.Context(), "Error constructing ssh response", "error", err)
++		return sso.LoginFailedRedirectURL
++	}
++
++	return redirectURL.String()
++}
++
+ // BuildDeviceWebRedirectPath constructs the redirect path for device web authorization.
+ // It takes a DeviceWebToken and an optional client redirect URL as input.
+ // The function formats a redirect path with the device ID and token from the provided DeviceWebToken.
+diff --git a/lib/auth/oidc_service.go b/lib/auth/oidc_service.go
+new file mode 100644
+index 0000000000..6fde2bd3af
+--- /dev/null
++++ b/lib/auth/oidc_service.go
+@@ -0,0 +1,547 @@
++/*
++ * Teleport
++ * Copyright (C) 2023  Gravitational, Inc.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU Affero General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Affero General Public License for more details.
++ *
++ * You should have received a copy of the GNU Affero General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package auth
++
++import (
++	"context"
++	"fmt"
++	"log/slog"
++	"net/url"
++	"time"
++
++	"github.com/gravitational/trace"
++	"github.com/zitadel/oidc/v3/pkg/client/rp"
++	"github.com/zitadel/oidc/v3/pkg/oidc"
++
++	"github.com/gravitational/teleport"
++	"github.com/gravitational/teleport/api/constants"
++	apidefaults "github.com/gravitational/teleport/api/defaults"
++	"github.com/gravitational/teleport/api/types"
++	apievents "github.com/gravitational/teleport/api/types/events"
++	"github.com/gravitational/teleport/api/utils/keys/hardwarekey"
++	"github.com/gravitational/teleport/lib/auth/authclient"
++	"github.com/gravitational/teleport/lib/authz"
++	"github.com/gravitational/teleport/lib/client/sso"
++	"github.com/gravitational/teleport/lib/defaults"
++	"github.com/gravitational/teleport/lib/events"
++	"github.com/gravitational/teleport/lib/loginrule"
++	"github.com/gravitational/teleport/lib/observability/otelhttp"
++	"github.com/gravitational/teleport/lib/services"
++	"github.com/gravitational/teleport/lib/utils"
++)
++
++var _ OIDCService = (*ossOIDCService)(nil)
++
++type ossOIDCService struct {
++	authServer *Server
++}
++
++// NewOSSOIDCService creates an OIDCService backed by the given auth server.
++func NewOSSOIDCService(server *Server) OIDCService {
++	return &ossOIDCService{authServer: server}
++}
++
++func (s *ossOIDCService) CreateOIDCAuthRequest(ctx context.Context, req types.OIDCAuthRequest) (*types.OIDCAuthRequest, error) {
++	connector, err := s.authServer.GetOIDCConnector(ctx, req.ConnectorID, true)
++	if err != nil {
++		return nil, trace.Wrap(err)
++	}
++
++	if !req.CreateWebSession {
++		ceremonyType := sso.CeremonyTypeLogin
++		if req.SSOTestFlow {
++			ceremonyType = sso.CeremonyTypeTest
++		}
++		if err := sso.ValidateClientRedirect(req.ClientRedirectURL, ceremonyType, connector.GetClientRedirectSettings()); err != nil {
++			return nil, trace.Wrap(err, InvalidClientRedirectErrorMessage)
++		}
++	}
++
++	req.StateToken, err = utils.CryptoRandomHex(defaults.TokenLenBytes)
++	if err != nil {
++		return nil, trace.Wrap(err)
++	}
++
++	redirectURL, err := services.GetRedirectURL(connector, req.ProxyAddress)
++	if err != nil {
++		return nil, trace.Wrap(err)
++	}
++
++	provider, err := s.newRelyingParty(ctx, connector, redirectURL)
++	if err != nil {
++		return nil, trace.Wrap(err)
++	}
++
++	authURLOpts := []rp.AuthURLOpt{}
++	if prompt := connector.GetPrompt(); prompt != "" {
++		authURLOpts = append(authURLOpts, rp.WithPrompt(prompt))
++	}
++	if acr := connector.GetACR(); acr != "" {
++		authURLOpts = append(authURLOpts, rp.AuthURLOpt(rp.WithURLParam("acr_values", acr)))
++	}
++	if req.LoginHint != "" {
++		authURLOpts = append(authURLOpts, rp.AuthURLOpt(rp.WithURLParam("login_hint", req.LoginHint)))
++	}
++
++	if connector.IsPKCEEnabled() {
++		verifier, err := utils.CryptoRandomHex(32)
++		if err != nil {
++			return nil, trace.Wrap(err)
++		}
++		req.PkceVerifier = verifier
++		challenge := oidc.NewSHACodeChallenge(verifier)
++		authURLOpts = append(authURLOpts,
++			rp.WithCodeChallenge(challenge),
++			rp.AuthURLOpt(rp.WithURLParam("code_challenge_method", string(oidc.CodeChallengeMethodS256))),
++		)
++	}
++
++	req.RedirectURL = rp.AuthURL(req.StateToken, provider, authURLOpts...)
++
++	s.authServer.logger.DebugContext(ctx, "Creating OIDC auth request",
++		"connector", req.ConnectorID, "redirect_url", req.RedirectURL)
++
++	if err := s.authServer.Services.CreateOIDCAuthRequest(ctx, req, defaults.OIDCAuthRequestTTL); err != nil {
++		return nil, trace.Wrap(err)
++	}
++	return &req, nil
++}
++
++func (s *ossOIDCService) CreateOIDCAuthRequestForMFA(ctx context.Context, req types.OIDCAuthRequest) (*types.OIDCAuthRequest, error) {
++	return s.CreateOIDCAuthRequest(ctx, req)
++}
++
++func (s *ossOIDCService) ValidateOIDCAuthCallback(ctx context.Context, q url.Values) (*authclient.OIDCAuthResponse, error) {
++	logger := s.authServer.logger.With(teleport.ComponentKey, "oidc")
++
++	if errParam := q.Get("error"); errParam != "" {
++		errDesc := q.Get("error_description")
++		oauthErr := trace.OAuth2("invalid_request", errParam, q)
++		return nil, trace.WithUserMessage(oauthErr, "OIDC provider returned error: %v [%v]", errDesc, errParam)
++	}
++
++	code := q.Get("code")
++	if code == "" {
++		oauthErr := trace.OAuth2("invalid_request", "code query param must be set", q)
++		return nil, trace.WithUserMessage(oauthErr, "Invalid parameters received from OIDC provider.")
++	}
++
++	stateToken := q.Get("state")
++	if stateToken == "" {
++		oauthErr := trace.OAuth2("invalid_request", "missing state query param", q)
++		return nil, trace.WithUserMessage(oauthErr, "Invalid parameters received from OIDC provider.")
++	}
++
++	req, err := s.authServer.Services.GetOIDCAuthRequest(ctx, stateToken)
++	if err != nil {
++		return nil, trace.Wrap(err, "Failed to get OIDC auth request.")
++	}
++
++	connector, err := s.getConnectorForRequest(ctx, req)
++	if err != nil {
++		return nil, trace.Wrap(err)
++	}
++
++	redirectURL, err := services.GetRedirectURL(connector, req.ProxyAddress)
++	if err != nil {
++		return nil, trace.Wrap(err)
++	}
++
++	provider, err := s.newRelyingParty(ctx, connector, redirectURL)
++	if err != nil {
++		return nil, trace.Wrap(err)
++	}
++
++	codeExchangeOpts := []rp.CodeExchangeOpt{}
++	if connector.IsPKCEEnabled() && req.PkceVerifier != "" {
++		codeExchangeOpts = append(codeExchangeOpts, rp.WithCodeVerifier(req.PkceVerifier))
++	}
++
++	tokens, err := rp.CodeExchange[*oidc.IDTokenClaims](ctx, code, provider, codeExchangeOpts...)
++	if err != nil {
++		return nil, trace.Wrap(err, "OIDC code exchange failed.")
++	}
++
++	claims, err := s.extractClaims(ctx, tokens, provider)
++	if err != nil {
++		return nil, trace.Wrap(err, "Failed to extract OIDC claims.")
++	}
++
++	username := s.extractUsername(connector, claims)
++	if username == "" {
++		return nil, trace.BadParameter("could not determine username from OIDC claims (username_claim=%q)", connector.GetUsernameClaim())
++	}
++
++	logger.DebugContext(ctx, "Retrieved OIDC claims",
++		slog.Group("claims",
++			slog.String("username", username),
++			slog.String("subject", tokens.IDTokenClaims.Subject),
++		),
++	)
++
++	params, err := s.calculateOIDCUser(ctx, connector, claims, username, req)
++	if err != nil {
++		return nil, trace.Wrap(err, "Failed to calculate user attributes.")
++	}
++
++	user, err := s.createOIDCUser(ctx, params, req.SSOTestFlow)
++	if err != nil {
++		return nil, trace.Wrap(err, "Failed to create user from provided parameters.")
++	}
++
++	if err := s.authServer.CallLoginHooks(ctx, user); err != nil {
++		return nil, trace.Wrap(err)
++	}
++
++	userState, err := s.authServer.GetUserOrLoginState(ctx, user.GetName())
++	if err != nil {
++		return nil, trace.Wrap(err)
++	}
++
++	if req.SSOTestFlow {
++		return &authclient.OIDCAuthResponse{
++			Username: params.Username,
++			Identity: types.ExternalIdentity{
++				ConnectorID: req.ConnectorID,
++				Username:    params.Username,
++				UserID:      tokens.IDTokenClaims.Subject,
++			},
++			Req: authclient.OIDCAuthRequest{
++				ConnectorID:       req.ConnectorID,
++				CSRFToken:         req.CSRFToken,
++				CreateWebSession:  req.CreateWebSession,
++				ClientRedirectURL: req.ClientRedirectURL,
++			},
++		}, nil
++	}
++
++	return s.makeOIDCAuthResponse(ctx, req, userState, tokens.IDTokenClaims.Subject, params.SessionTTL)
++}
++
++func (s *ossOIDCService) newRelyingParty(ctx context.Context, connector types.OIDCConnector, redirectURL string) (rp.RelyingParty, error) {
++	scopes := connector.GetScope()
++	if len(scopes) == 0 {
++		scopes = []string{oidc.ScopeOpenID, "profile", "email"}
++	}
++
++	opts := []rp.Option{
++		rp.WithHTTPClient(otelhttp.DefaultClient),
++	}
++
++	return rp.NewRelyingPartyOIDC(ctx,
++		connector.GetIssuerURL(),
++		connector.GetClientID(),
++		connector.GetClientSecret(),
++		redirectURL,
++		scopes,
++		opts...,
++	)
++}
++
++func (s *ossOIDCService) getConnectorForRequest(ctx context.Context, req *types.OIDCAuthRequest) (types.OIDCConnector, error) {
++	if req.SSOTestFlow && req.ConnectorSpec != nil {
++		return types.NewOIDCConnector(req.ConnectorID, *req.ConnectorSpec)
++	}
++	return s.authServer.GetOIDCConnector(ctx, req.ConnectorID, true)
++}
++
++func (s *ossOIDCService) extractClaims(ctx context.Context, tokens *oidc.Tokens[*oidc.IDTokenClaims], provider rp.RelyingParty) (map[string][]string, error) {
++	claims := make(map[string][]string)
++
++	idClaims := tokens.IDTokenClaims
++	if idClaims.Subject != "" {
++		claims["sub"] = []string{idClaims.Subject}
++	}
++	if idClaims.PreferredUsername != "" {
++		claims["preferred_username"] = []string{idClaims.PreferredUsername}
++	}
++	if idClaims.Email != "" {
++		claims["email"] = []string{idClaims.Email}
++	}
++	if idClaims.Name != "" {
++		claims["name"] = []string{idClaims.Name}
++	}
++	for k, v := range idClaims.Claims {
++		claims[k] = claimValueToStringSlice(v)
++	}
++
++	userInfo, err := rp.Userinfo[*oidc.UserInfo](ctx, tokens.AccessToken, tokens.TokenType, idClaims.Subject, provider)
++	if err != nil {
++		s.authServer.logger.WarnContext(ctx, "Failed to fetch OIDC userinfo, proceeding with ID token claims only", "error", err)
++		return claims, nil
++	}
++
++	if userInfo.PreferredUsername != "" {
++		claims["preferred_username"] = []string{userInfo.PreferredUsername}
++	}
++	if userInfo.Email != "" {
++		claims["email"] = []string{userInfo.Email}
++	}
++	if userInfo.Name != "" {
++		claims["name"] = []string{userInfo.Name}
++	}
++	for k, v := range userInfo.Claims {
++		claims[k] = claimValueToStringSlice(v)
++	}
++
++	return claims, nil
++}
++
++func claimValueToStringSlice(v any) []string {
++	switch val := v.(type) {
++	case string:
++		return []string{val}
++	case []any:
++		out := make([]string, 0, len(val))
++		for _, item := range val {
++			out = append(out, fmt.Sprint(item))
++		}
++		return out
++	case []string:
++		return val
++	default:
++		return []string{fmt.Sprint(val)}
++	}
++}
++
++func (s *ossOIDCService) extractUsername(connector types.OIDCConnector, claims map[string][]string) string {
++	usernameClaim := connector.GetUsernameClaim()
++	if usernameClaim != "" {
++		if vals, ok := claims[usernameClaim]; ok && len(vals) > 0 {
++			return vals[0]
++		}
++	}
++	if vals, ok := claims["sub"]; ok && len(vals) > 0 {
++		return vals[0]
++	}
++	return ""
++}
++
++func (s *ossOIDCService) calculateOIDCUser(ctx context.Context, connector types.OIDCConnector, claims map[string][]string, username string, req *types.OIDCAuthRequest) (*CreateUserParams, error) {
++	p := CreateUserParams{
++		ConnectorName: connector.GetName(),
++		Username:      username,
++	}
++
++	_, p.Roles = services.TraitsToRoles(connector.GetTraitMappings(), claims)
++	if len(p.Roles) == 0 {
++		return nil, trace.AccessDenied("user %q has no roles mapped from OIDC claims; check the connector's claims_to_roles configuration", username)
++	}
++
++	p.KubeGroups = claims[constants.TraitKubeGroups]
++	p.KubeUsers = claims[constants.TraitKubeUsers]
++	p.Traits = map[string][]string{
++		constants.TraitLogins:     {p.Username},
++		constants.TraitKubeGroups: p.KubeGroups,
++		constants.TraitKubeUsers:  p.KubeUsers,
++	}
++	for k, v := range claims {
++		if _, exists := p.Traits[k]; !exists {
++			p.Traits[k] = v
++		}
++	}
++
++	evaluationInput := &loginrule.EvaluationInput{
++		Traits: p.Traits,
++	}
++	evaluationOutput, err := s.authServer.GetLoginRuleEvaluator().Evaluate(ctx, evaluationInput)
++	if err != nil {
++		return nil, trace.Wrap(err)
++	}
++	p.Traits = evaluationOutput.Traits
++	p.KubeGroups = p.Traits[constants.TraitKubeGroups]
++	p.KubeUsers = p.Traits[constants.TraitKubeUsers]
++
++	roles, err := services.FetchRoles(p.Roles, s.authServer, p.Traits)
++	if err != nil {
++		return nil, trace.Wrap(err)
++	}
++	roleTTL := roles.AdjustSessionTTL(apidefaults.MaxCertDuration)
++	p.SessionTTL = utils.MinTTL(roleTTL, req.CertTTL)
++
++	return &p, nil
++}
++
++func (s *ossOIDCService) createOIDCUser(ctx context.Context, p *CreateUserParams, dryRun bool) (types.User, error) {
++	s.authServer.logger.DebugContext(ctx, "Generating dynamic OIDC identity",
++		"connector_name", p.ConnectorName,
++		"user_name", p.Username,
++		"roles", p.Roles,
++		"dry_run", dryRun,
++	)
++
++	expires := s.authServer.GetClock().Now().UTC().Add(p.SessionTTL)
++
++	user := &types.UserV2{
++		Kind:    types.KindUser,
++		Version: types.V2,
++		Metadata: types.Metadata{
++			Name:      p.Username,
++			Namespace: apidefaults.Namespace,
++			Expires:   &expires,
++		},
++		Spec: types.UserSpecV2{
++			Roles:  p.Roles,
++			Traits: p.Traits,
++			OIDCIdentities: []types.ExternalIdentity{{
++				ConnectorID: p.ConnectorName,
++				Username:    p.Username,
++			}},
++			CreatedBy: types.CreatedBy{
++				User: types.UserRef{Name: teleport.UserSystem},
++				Time: s.authServer.GetClock().Now().UTC(),
++				Connector: &types.ConnectorRef{
++					Type:     constants.OIDC,
++					ID:       p.ConnectorName,
++					Identity: p.Username,
++				},
++			},
++		},
++	}
++
++	if dryRun {
++		return user, nil
++	}
++
++	existingUser, err := s.authServer.Services.GetUser(ctx, p.Username, false)
++	if err != nil && !trace.IsNotFound(err) {
++		return nil, trace.Wrap(err)
++	}
++
++	if existingUser != nil {
++		ref := user.GetCreatedBy().Connector
++		if !ref.IsSameProvider(existingUser.GetCreatedBy().Connector) {
++			return nil, trace.AlreadyExists("local user %q already exists and is not an OIDC user",
++				existingUser.GetName())
++		}
++		user.SetRevision(existingUser.GetRevision())
++		if _, err := s.authServer.UpdateUser(ctx, user); err != nil {
++			return nil, trace.Wrap(err)
++		}
++	} else {
++		if _, err := s.authServer.CreateUser(ctx, user); err != nil {
++			return nil, trace.Wrap(err)
++		}
++	}
++
++	return user, nil
++}
++
++func (s *ossOIDCService) makeOIDCAuthResponse(
++	ctx context.Context,
++	req *types.OIDCAuthRequest,
++	userState services.UserState,
++	subject string,
++	sessionTTL time.Duration,
++) (*authclient.OIDCAuthResponse, error) {
++	auth := authclient.OIDCAuthResponse{
++		Username: userState.GetName(),
++		Identity: types.ExternalIdentity{
++			ConnectorID: req.ConnectorID,
++			Username:    userState.GetName(),
++			UserID:      subject,
++		},
++		Req: authclient.OIDCAuthRequest{
++			ConnectorID:       req.ConnectorID,
++			CSRFToken:         req.CSRFToken,
++			CreateWebSession:  req.CreateWebSession,
++			ClientRedirectURL: req.ClientRedirectURL,
++			SSHPubKey:         req.SshPublicKey,
++			TLSPubKey:         req.TlsPublicKey,
++		},
++	}
++
++	if req.CreateWebSession {
++		session, err := s.authServer.CreateWebSessionFromReq(ctx, NewWebSessionRequest{
++			User:                 userState.GetName(),
++			Roles:                userState.GetRoles(),
++			Traits:               userState.GetTraits(),
++			SessionTTL:           sessionTTL,
++			LoginTime:            s.authServer.clock.Now().UTC(),
++			LoginIP:              req.ClientLoginIP,
++			LoginUserAgent:       req.ClientUserAgent,
++			AttestWebSession:     true,
++			CreateDeviceWebToken: true,
++			Scope:                req.Scope,
++		})
++		if err != nil {
++			return nil, trace.Wrap(err, "Failed to create web session.")
++		}
++		auth.Session = session
++	}
++
++	if len(req.SshPublicKey) != 0 || len(req.TlsPublicKey) != 0 {
++		sshCert, tlsCert, err := s.authServer.CreateSessionCerts(ctx, &SessionCertsRequest{
++			UserState:               userState,
++			SessionTTL:              sessionTTL,
++			SSHPubKey:               req.SshPublicKey,
++			TLSPubKey:               req.TlsPublicKey,
++			SSHAttestationStatement: hardwarekey.AttestationStatementFromProto(req.SshAttestationStatement),
++			TLSAttestationStatement: hardwarekey.AttestationStatementFromProto(req.TlsAttestationStatement),
++			Compatibility:           req.Compatibility,
++			RouteToCluster:          req.RouteToCluster,
++			KubernetesCluster:       req.KubernetesCluster,
++			LoginIP:                 req.ClientLoginIP,
++			Scope:                   req.Scope,
++		})
++		if err != nil {
++			return nil, trace.Wrap(err, "Failed to create session certificate.")
++		}
++
++		clusterName, err := s.authServer.GetClusterName(ctx)
++		if err != nil {
++			return nil, trace.Wrap(err, "Failed to obtain cluster name.")
++		}
++
++		auth.Cert = sshCert
++		auth.TLSCert = tlsCert
++
++		authority, err := s.authServer.GetCertAuthority(ctx, types.CertAuthID{
++			Type:       types.HostCA,
++			DomainName: clusterName.GetClusterName(),
++		}, false)
++		if err != nil {
++			return nil, trace.Wrap(err, "Failed to obtain cluster's host CA.")
++		}
++		auth.HostSigners = append(auth.HostSigners, authority)
++	}
++
++	if o, err := s.authServer.ClientOptionsForLogin(userState); err == nil {
++		auth.ClientOptions = o
++	} else {
++		s.authServer.logger.WarnContext(ctx, "Failed to calculate client options for OIDC login",
++			"username", userState.GetName(), "error", err)
++	}
++
++	if err := s.authServer.emitter.EmitAuditEvent(ctx, &apievents.UserLogin{
++		Metadata: apievents.Metadata{
++			Type: events.UserLoginEvent,
++			Code: events.UserSSOLoginCode,
++		},
++		UserMetadata: apievents.UserMetadata{
++			User: userState.GetName(),
++		},
++		Method:             events.LoginMethodOIDC,
++		ConnectionMetadata: authz.ConnectionMetadata(ctx),
++	}); err != nil {
++		s.authServer.logger.WarnContext(ctx, "Failed to emit OIDC login event", "error", err)
++	}
++
++	return &auth, nil
++}

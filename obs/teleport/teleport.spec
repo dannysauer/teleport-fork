@@ -22,6 +22,7 @@ Source0:        teleport-%{version}.tar.gz
 Source1:        teleport-%{version}-webassets.tar.gz
 # Pre-vendored Rust deps for fdpass-teleport (from GitHub Actions cargo vendor)
 Source2:        teleport-%{version}-fdpass-vendor.tar.gz
+Patch0:         0001-implement-oidc-service-for-oss-sso-login.patch
 
 BuildRequires:  go >= 1.25
 BuildRequires:  rust >= 1.94
@@ -63,9 +64,8 @@ tar xzf %{SOURCE1}
 # Extract pre-vendored Rust dependencies for fdpass-teleport.
 tar xzf %{SOURCE2}
 
-# Apply any patches from the autobuild branch patches/ directory.
-# (Currently none — directory is scaffolded for future use.)
-# %%patch0 -p1
+# Apply patches from the autobuild branch patches/ directory.
+%patch -P0 -p1
 
 %build
 export GOFLAGS="-mod=vendor"

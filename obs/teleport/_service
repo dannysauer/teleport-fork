@@ -43,6 +43,19 @@
   </service>
 
   <!--
+    Fetch patch files from the autobuild branch patches/ directory.
+    These are applied by the spec (%patch) and debian/rules.
+  -->
+  <service name="obs_scm">
+    <param name="url">https://github.com/dannysauer/teleport-fork</param>
+    <param name="scm">git</param>
+    <param name="revision">autobuild</param>
+    <param name="subdir">patches</param>
+    <param name="filename">patches</param>
+    <param name="extract">0001-implement-oidc-service-for-oss-sso-login.patch</param>
+  </service>
+
+  <!--
     Vendor all Go module dependencies.
     Runs during the OBS service phase (which has network access).
     Result is a vendor/ directory added to the source tarball.
