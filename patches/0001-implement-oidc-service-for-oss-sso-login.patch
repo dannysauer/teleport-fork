@@ -187,10 +187,10 @@ index e1f99689a7..331ebaa65a 100644
  // The function formats a redirect path with the device ID and token from the provided DeviceWebToken.
 diff --git a/lib/auth/oidc_service.go b/lib/auth/oidc_service.go
 new file mode 100644
-index 0000000000..6fde2bd3af
+index 0000000000..cf54b0a872
 --- /dev/null
 +++ b/lib/auth/oidc_service.go
-@@ -0,0 +1,547 @@
+@@ -0,0 +1,552 @@
 +/*
 + * Teleport
 + * Copyright (C) 2023  Gravitational, Inc.
@@ -455,9 +455,33 @@ index 0000000000..6fde2bd3af
 +}
 +
 +func (s *ossOIDCService) extractClaims(ctx context.Context, tokens *oidc.Tokens[*oidc.IDTokenClaims], provider rp.RelyingParty) (map[string][]string, error) {
-+	claims := make(map[string][]string)
-+
 +	idClaims := tokens.IDTokenClaims
++
++	userInfo, err := rp.Userinfo[*oidc.UserInfo](ctx, tokens.AccessToken, tokens.TokenType, idClaims.Subject, provider)
++	if err != nil {
++		s.authServer.logger.WarnContext(ctx, "Failed to fetch OIDC userinfo, falling back to ID token claims", "error", err)
++		return s.claimsFromIDToken(idClaims), nil
++	}
++
++	claims := make(map[string][]string)
++	claims["sub"] = []string{userInfo.Subject}
++	if userInfo.PreferredUsername != "" {
++		claims["preferred_username"] = []string{userInfo.PreferredUsername}
++	}
++	if userInfo.Email != "" {
++		claims["email"] = []string{userInfo.Email}
++	}
++	if userInfo.Name != "" {
++		claims["name"] = []string{userInfo.Name}
++	}
++	for k, v := range userInfo.Claims {
++		claims[k] = claimValueToStringSlice(v)
++	}
++	return claims, nil
++}
++
++func (s *ossOIDCService) claimsFromIDToken(idClaims *oidc.IDTokenClaims) map[string][]string {
++	claims := make(map[string][]string)
 +	if idClaims.Subject != "" {
 +		claims["sub"] = []string{idClaims.Subject}
 +	}
@@ -473,27 +497,7 @@ index 0000000000..6fde2bd3af
 +	for k, v := range idClaims.Claims {
 +		claims[k] = claimValueToStringSlice(v)
 +	}
-+
-+	userInfo, err := rp.Userinfo[*oidc.UserInfo](ctx, tokens.AccessToken, tokens.TokenType, idClaims.Subject, provider)
-+	if err != nil {
-+		s.authServer.logger.WarnContext(ctx, "Failed to fetch OIDC userinfo, proceeding with ID token claims only", "error", err)
-+		return claims, nil
-+	}
-+
-+	if userInfo.PreferredUsername != "" {
-+		claims["preferred_username"] = []string{userInfo.PreferredUsername}
-+	}
-+	if userInfo.Email != "" {
-+		claims["email"] = []string{userInfo.Email}
-+	}
-+	if userInfo.Name != "" {
-+		claims["name"] = []string{userInfo.Name}
-+	}
-+	for k, v := range userInfo.Claims {
-+		claims[k] = claimValueToStringSlice(v)
-+	}
-+
-+	return claims, nil
++	return claims
 +}
 +
 +func claimValueToStringSlice(v any) []string {
@@ -514,14 +518,15 @@ index 0000000000..6fde2bd3af
 +}
 +
 +func (s *ossOIDCService) extractUsername(connector types.OIDCConnector, claims map[string][]string) string {
-+	usernameClaim := connector.GetUsernameClaim()
-+	if usernameClaim != "" {
++	if usernameClaim := connector.GetUsernameClaim(); usernameClaim != "" {
 +		if vals, ok := claims[usernameClaim]; ok && len(vals) > 0 {
 +			return vals[0]
 +		}
 +	}
-+	if vals, ok := claims["sub"]; ok && len(vals) > 0 {
-+		return vals[0]
++	for _, fallback := range []string{"preferred_username", "email", "sub"} {
++		if vals, ok := claims[fallback]; ok && len(vals) > 0 {
++			return vals[0]
++		}
 +	}
 +	return ""
 +}
