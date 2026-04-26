@@ -754,7 +754,7 @@ index 0000000000..01fdf9266d
 +}
 diff --git a/lib/auth/oidc_service_test.go b/lib/auth/oidc_service_test.go
 new file mode 100644
-index 0000000000..0878dcde24
+index 0000000000..03327c708e
 --- /dev/null
 +++ b/lib/auth/oidc_service_test.go
 @@ -0,0 +1,213 @@
@@ -821,8 +821,8 @@ index 0000000000..0878dcde24
 +		claims := map[string][]string{
 +			"sub":                {"sub-123"},
 +			"preferred_username": {"alice"},
-+			"email":             {"alice@example.com"},
-+			"nickname":          {"coolalice"},
++			"email":              {"alice@example.com"},
++			"nickname":           {"coolalice"},
 +		}
 +		assert.Equal(t, "coolalice", svc.extractUsername(conn, claims))
 +	})
@@ -839,7 +839,7 @@ index 0000000000..0878dcde24
 +		claims := map[string][]string{
 +			"sub":                {"sub-123"},
 +			"preferred_username": {"alice"},
-+			"email":             {"alice@example.com"},
++			"email":              {"alice@example.com"},
 +		}
 +		assert.Equal(t, "alice", svc.extractUsername(conn, claims))
 +	})
@@ -855,7 +855,7 @@ index 0000000000..0878dcde24
 +		claims := map[string][]string{
 +			"sub":                {"sub-123"},
 +			"preferred_username": {"alice"},
-+			"email":             {"alice@example.com"},
++			"email":              {"alice@example.com"},
 +		}
 +		assert.Equal(t, "alice", svc.extractUsername(conn, claims))
 +	})

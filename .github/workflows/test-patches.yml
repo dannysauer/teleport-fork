@@ -1,0 +1,70 @@
+# Copyright 2025 Danny Sauer and contributors
+# SPDX-License-Identifier: Apache-2.0
+
+name: Test patches
+
+on:
+  push:
+    branches: [autobuild]
+    paths: ['patches/**']
+  pull_request:
+    paths: ['patches/**']
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout autobuild branch
+        uses: actions/checkout@v4
+        with:
+          path: autobuild
+
+      - name: Checkout upstream master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          path: upstream
+
+      - name: Apply patches
+        working-directory: upstream
+        run: |
+          for patch in ../autobuild/patches/*.patch; do
+            [ -f "$patch" ] || continue
+            name="$(basename "$patch")"
+            echo "Applying $name …"
+            git apply "$patch"
+            echo "  ✓ $name"
+          done
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: upstream/go.mod
+          cache-dependency-path: upstream/go.sum
+
+      - name: Check gofmt
+        working-directory: upstream
+        run: |
+          bad=""
+          for patch in ../autobuild/patches/*.patch; do
+            [ -f "$patch" ] || continue
+            go_files=$(grep -E '^\+\+\+ b/' "$patch" | sed 's|^+++ b/||' | grep '\.go$' || true)
+            for f in $go_files; do
+              [ -f "$f" ] || continue
+              if ! diff -q <(gofmt "$f") "$f" &>/dev/null; then
+                echo "::error file=$f::Not gofmt-formatted"
+                bad=1
+              fi
+            done
+          done
+          [ -z "$bad" ]
+
+      - name: Run go vet
+        working-directory: upstream
+        run: go vet ./lib/auth/...
+
+      - name: Run unit tests
+        working-directory: upstream
+        run: |
+          go test -v -count=1 -run 'TestClaimValue|TestExtractUsername|TestClaimsFromIDToken' ./lib/auth/
