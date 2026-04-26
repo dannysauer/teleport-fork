@@ -84,6 +84,14 @@ export GOPATH="%{_builddir}/gopath"
 # common.mk checks for /usr/include/linux/bpf.h and /usr/include/bpf/bpf_helpers.h.
 # libbpf-devel provides both on Tumbleweed.
 
+# The upstream Makefile injects teleportBuildType=community via TELEPORT_LDFLAGS,
+# which triggers a "you must agree to our terms" checkbox on first login that
+# restricts use to companies under $10MM ARR / 100 employees.  That restriction
+# applies only to Gravitational's own Community Edition binaries and cannot be
+# enforced on third-party AGPL builds.  Override back to the default "oss" type.
+export TELEPORT_LDFLAGS="-ldflags '-w -s'"
+export TOOLS_LDFLAGS="-ldflags '-w -s'"
+
 make \
     OS=linux \
     ARCH=%{go_arch} \
