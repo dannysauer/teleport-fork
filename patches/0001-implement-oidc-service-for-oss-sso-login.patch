@@ -5,10 +5,10 @@ index 00557fddd5..0bb6e0d031 100644
 @@ -37,7 +37,7 @@ type OIDCService interface {
  	ValidateOIDCAuthCallback(ctx context.Context, q url.Values) (*authclient.OIDCAuthResponse, error)
  }
- 
+
 -var errOIDCNotImplemented = &trace.AccessDeniedError{Message: "OIDC is only available in enterprise subscriptions"}
 +var errOIDCNotImplemented = &trace.AccessDeniedError{Message: "OIDC authentication service is not initialized"}
- 
+
  // UpsertOIDCConnector creates or updates an OIDC connector.
  func (a *Server) UpsertOIDCConnector(ctx context.Context, connector types.OIDCConnector) (types.OIDCConnector, error) {
 diff --git a/lib/service/service.go b/lib/service/service.go
@@ -18,7 +18,7 @@ index 045206c073..a28d0ba00b 100644
 @@ -2543,6 +2543,8 @@ func (process *TeleportProcess) initAuthService() error {
  	}
  	authServer.SetLockWatcher(lockWatcher)
- 
+
 +	authServer.SetOIDCService(auth.NewOSSOIDCService(authServer))
 +
  	if externalAuditStorage.IsUsed() {
@@ -31,7 +31,7 @@ index e1f99689a7..331ebaa65a 100644
 @@ -1040,6 +1040,11 @@ func (h *Handler) bindDefaultEndpoints() {
  	h.GET("/webapi/github/callback", h.WithMetaRedirect(h.githubCallback))
  	h.POST("/webapi/github/login/console", h.WithLimiter(h.githubLoginConsole))
- 
+
 +	// OIDC connector handlers
 +	h.GET("/webapi/oidc/login/web", h.WithRedirect(h.oidcLoginWeb))
 +	h.GET("/webapi/oidc/callback", h.WithMetaRedirect(h.oidcCallback))
@@ -43,7 +43,7 @@ index e1f99689a7..331ebaa65a 100644
 @@ -2572,6 +2577,157 @@ func (h *Handler) githubCallback(w http.ResponseWriter, r *http.Request, p httpr
  	return redirectURL.String()
  }
- 
+
 +func (h *Handler) oidcLoginWeb(w http.ResponseWriter, r *http.Request, p httprouter.Params) string {
 +	logger := h.logger.With("auth", "oidc")
 +	logger.DebugContext(r.Context(), "Web login start")
