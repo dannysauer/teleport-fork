@@ -1,3 +1,9 @@
+# Copyright 2025 Danny Sauer and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# This spec file is licensed under Apache-2.0.
+# The Teleport software it packages is licensed under AGPL-3.0-only.
+
 %global debug_package %{nil}
 
 # Translate RPM arch names to Go arch names
@@ -22,6 +28,7 @@ Source0:        teleport-%{version}.tar.gz
 Source1:        teleport-%{version}-webassets.tar.gz
 # Pre-vendored Rust deps for fdpass-teleport (from GitHub Actions cargo vendor)
 Source2:        teleport-%{version}-fdpass-vendor.tar.gz
+Patch0:         0001-implement-oidc-service-for-oss-sso-login.patch
 
 BuildRequires:  go >= 1.25
 BuildRequires:  rust >= 1.94
@@ -63,9 +70,8 @@ tar xzf %{SOURCE1}
 # Extract pre-vendored Rust dependencies for fdpass-teleport.
 tar xzf %{SOURCE2}
 
-# Apply any patches from the autobuild branch patches/ directory.
-# (Currently none — directory is scaffolded for future use.)
-# %%patch0 -p1
+# Apply patches from the autobuild branch patches/ directory.
+%patch -P0 -p1
 
 %build
 export GOFLAGS="-mod=vendor"
@@ -77,6 +83,14 @@ export GOPATH="%{_builddir}/gopath"
 # BPF support requires these headers to be present.
 # common.mk checks for /usr/include/linux/bpf.h and /usr/include/bpf/bpf_helpers.h.
 # libbpf-devel provides both on Tumbleweed.
+
+# The upstream Makefile injects teleportBuildType=community via TELEPORT_LDFLAGS,
+# which triggers a "you must agree to our terms" checkbox on first login that
+# restricts use to companies under $10MM ARR / 100 employees.  That restriction
+# applies only to Gravitational's own Community Edition binaries and cannot be
+# enforced on third-party AGPL builds.  Override back to the default "oss" type.
+export TELEPORT_LDFLAGS="-ldflags '-w -s'"
+export TOOLS_LDFLAGS="-ldflags '-w -s'"
 
 make \
     OS=linux \

@@ -1,7 +1,7 @@
 # Patches
 
 This directory holds `.patch` files to apply on top of the upstream Teleport
-source before building. It is currently empty — the build is unmodified upstream.
+source before building.
 
 ## Workflow
 

@@ -1,4 +1,6 @@
 #!/usr/bin/make -f
+# Copyright 2025 Danny Sauer and contributors
+# SPDX-License-Identifier: Apache-2.0
 
 # Ubuntu 24.04 ships Go 1.22 which is too old for Teleport 19.
 # We install Go 1.25 from a tarball bundled as a source file (downloaded
@@ -30,6 +32,12 @@ WEBASSETS_TARBALL := $(wildcard ../teleport-*-webassets.tar.gz)
 	dh $@
 
 override_dh_auto_configure:
+	# Apply patches from autobuild branch
+	for p in $$(find ../patches -name '*.patch' 2>/dev/null | sort); do \
+	    echo "Applying $$p"; \
+	    patch -p1 < "$$p"; \
+	done
+
 	# Install Go toolchain from bundled tarball
 	mkdir -p $(GOROOT)
 	tar xzf ../$(GO_TARBALL) -C $(GOROOT) --strip-components=1
@@ -42,13 +50,17 @@ override_dh_auto_build:
 	mkdir -p $(BUILDDIR)
 	install -m755 ../$(FDPASS_BIN) $(BUILDDIR)/fdpass-teleport
 
-	# Build the Go binaries
+	# Build the Go binaries.
+	# Override TELEPORT_LDFLAGS/TOOLS_LDFLAGS so the upstream Makefile does
+	# not inject teleportBuildType=community (see teleport.spec for rationale).
 	PATH=$(GOROOT)/bin:$(PATH) \
 	GOPATH=$(GOPATH) \
 	GOFLAGS="-mod=vendor" \
 	GOPROXY="off" \
 	GONOSUMCHECK="*" \
 	GONOSUMDB="*" \
+	TELEPORT_LDFLAGS="-ldflags '-w -s'" \
+	TOOLS_LDFLAGS="-ldflags '-w -s'" \
 	$(MAKE) \
 	    OS=linux \
 	    ARCH=$(DEB_HOST_ARCH) \

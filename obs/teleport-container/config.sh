@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright 2025 Danny Sauer and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
 # KIWI post-install script — runs inside the image during the build.
 # Use this for one-time setup that can't be done via package install.
 

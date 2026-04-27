@@ -1,3 +1,6 @@
+# Copyright 2025 Danny Sauer and contributors
+# SPDX-License-Identifier: Apache-2.0
+
 name: Prepare OBS source
 
 # Triggered by a new version tag being pushed to master (by sync-upstream.yml),
