@@ -9,8 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 jobs:
   sync:
@@ -19,12 +18,27 @@ jobs:
       new_tags: ${{ steps.push-tags.outputs.new_tags }}
 
     steps:
+      # The built-in GITHUB_TOKEN can never push changes under .github/workflows/,
+      # and there is no `workflows` key for the permissions block. Upstream's tree
+      # contains workflow files, so we push with a GitHub App token that carries
+      # Contents: write + Workflows: write instead.
+      #
+      # Requires a GitHub App installed on this repo with those permissions,
+      # the repo variable APP_ID, and the repo secret APP_PRIVATE_KEY.
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Checkout master
         uses: actions/checkout@v4
         with:
           ref: master
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # Persisted so the later `git push origin ...` steps authenticate as the App.
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Add upstream remote
         run: |
