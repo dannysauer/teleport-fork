@@ -100,3 +100,75 @@ jobs:
           echo "### Sync result" >> "$GITHUB_STEP_SUMMARY"
           echo "- master updated: ${{ steps.check.outputs.needs_update }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Latest new tag: ${{ steps.push-tags.outputs.new_tags || 'none' }}" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Disable upstream workflows that don't belong on this fork ───────────────
+  # master is a pristine mirror of gravitational/teleport, so it carries
+  # upstream's entire .github/workflows/ tree. Several of those workflows push
+  # container images to ghcr.io/gravitational/* and fail here (the fork has no
+  # write access to that namespace), producing recurring failure noise.
+  #
+  # GitHub's enable/disable state is per-workflow-file and repo-wide (not branch
+  # scoped), and the API lists every workflow it has registered for the repo by
+  # file path. So we build a keep-list from the workflow files that live on THIS
+  # branch (the automation branch) and disable every other registered workflow —
+  # i.e. everything that only exists because master mirrors upstream. Runs after
+  # every sync, so anything upstream adds later is caught automatically.
+  #
+  # This step only ever DISABLES, and only ever workflows NOT present on this
+  # branch, so it can never take down the automation here.
+  disable-foreign-workflows:
+    runs-on: ubuntu-latest
+    needs: [sync]
+    if: always()  # independent of whether master changed
+    permissions:
+      contents: read   # checkout
+      actions: write   # enable/disable workflows via GITHUB_TOKEN
+    steps:
+      - name: Checkout automation branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        # No ref: checks out the branch this workflow runs from (the automation
+        # branch), whose .github/workflows/ is exactly our keep-list.
+
+      - name: Disable workflows not defined on this branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Keep-list = the workflow files that actually live on this branch.
+          # Derived from the checkout (not hardcoded) so adding a new automation
+          # workflow here keeps it automatically.
+          KEEP=$(ls .github/workflows/ 2>/dev/null | sort)
+
+          # Safety rails: if the checkout is wrong we could otherwise disable
+          # everything, including our own automation. Refuse to proceed unless
+          # the keep-list is non-empty and contains the file we're running from.
+          if [ -z "$KEEP" ]; then
+            echo "::error::keep-list is empty — refusing to disable anything"
+            exit 1
+          fi
+          if ! printf '%s\n' "$KEEP" | grep -qx "sync-upstream.yml"; then
+            echo "::error::sync-upstream.yml missing from keep-list — aborting"
+            exit 1
+          fi
+
+          echo "Keeping workflows defined on this branch:"
+          printf '%s\n' "$KEEP" | sed 's/^/  /'
+
+          # Walk every workflow GitHub has registered for the repo and disable
+          # the ones that aren't ours and aren't already disabled.
+          gh api "repos/$REPO/actions/workflows" --paginate \
+            --jq '.workflows[] | "\(.id)\t\(.state)\t\(.path)"' |
+          while IFS=$'\t' read -r id state path; do
+            name="${path##*/}"
+            if printf '%s\n' "$KEEP" | grep -qx "$name"; then
+              continue  # ours — leave it alone
+            fi
+            if [ "$state" = "active" ]; then
+              echo "Disabling foreign workflow: $name"
+              gh api -X PUT "repos/$REPO/actions/workflows/$id/disable"
+            else
+              echo "Already $state: $name"
+            fi
+          done
