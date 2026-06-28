@@ -1,66 +1,59 @@
 # teleport-fork
 
-Community builds of [Teleport](https://github.com/gravitational/teleport), automatically
-kept in sync with upstream and published as installable packages, a container image,
-and Helm charts.
+[![build result](https://build.opensuse.org/projects/home:dannysauer/packages/gravitational_teleport/badge.svg?type=default)](https://build.opensuse.org/package/show/home:dannysauer/gravitational_teleport)
+
+Community builds of [Teleport](https://github.com/gravitational/teleport),
+automatically kept in sync with upstream and published through OBS as RPM and
+Deb packages.
 
 > **Source branch:** The `master` branch of this fork is a clean mirror of
 > `gravitational/teleport`. This `autobuild` branch contains only the build
-> automation — no Teleport source code.
+> automation. `obs-build-source` and `obs-build-inputs` are force-updated
+> operational branches used by OBS.
 
 ## Packages
+
+These commands are expected to work after the first successful OBS build has
+published `home:dannysauer / gravitational_teleport`.
 
 ### openSUSE Tumbleweed (RPM)
 
 ```bash
-zypper addrepo https://download.opensuse.org/repositories/home:dannysauer:teleport/openSUSE_Tumbleweed/home:dannysauer:teleport.repo
-zypper refresh
-zypper install teleport
+sudo zypper addrepo https://download.opensuse.org/repositories/home:/dannysauer/openSUSE_Tumbleweed/home:dannysauer.repo
+sudo zypper refresh
+sudo zypper install teleport
 ```
 
 ### Ubuntu 24.04 (Deb)
 
 ```bash
-echo "deb https://download.opensuse.org/repositories/home:dannysauer:teleport/Ubuntu_24.04/ ./" \
+curl -fsSL https://download.opensuse.org/repositories/home:/dannysauer/Ubuntu_24.04/Release.key \
+  | sudo gpg --dearmor -o /usr/share/keyrings/teleport-obs.gpg
+echo "deb [signed-by=/usr/share/keyrings/teleport-obs.gpg] https://download.opensuse.org/repositories/home:/dannysauer/Ubuntu_24.04/ ./" \
   | sudo tee /etc/apt/sources.list.d/teleport.list
-curl -fsSL https://download.opensuse.org/repositories/home:dannysauer:teleport/Ubuntu_24.04/Release.key \
-  | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/teleport.gpg
 sudo apt update
 sudo apt install teleport
 ```
 
 ### Container image
 
-```bash
-docker pull ghcr.io/dannysauer/teleport:latest
-# or pin to a specific version:
-docker pull ghcr.io/dannysauer/teleport:19.0.4
-```
-
-The image is built on a minimal openSUSE Tumbleweed base and exposes ports
-3022–3025 (SSH/tunnel/auth) and 3080 (HTTPS/web UI).
+Container publishing is scaffolded in `obs/teleport-container/`, but it is not
+part of the active OBS trigger path yet.
 
 ### Helm charts
 
-```bash
-# Install teleport-cluster
-helm install teleport oci://ghcr.io/dannysauer/charts/teleport-cluster \
-  --version 19.0.4 \
-  --set clusterName=teleport.example.com
-
-# List available charts
-helm search repo oci://ghcr.io/dannysauer/charts
-```
-
-Charts are repackaged from upstream with the default image updated to point to
-`ghcr.io/dannysauer/teleport`. All other chart values are unchanged from upstream.
+Helm chart publishing depends on the container image path and is disabled until
+the OBS container package is wired to the same release source as the RPM/Deb
+package.
 
 ## Branch layout
 
 | Branch | Contents |
 |--------|----------|
-| `autobuild` *(default)* | Build automation, OBS package specs, KIWI container config |
+| `autobuild` *(default)* | Build automation, OBS package specs, KIWI container scaffold |
 | `master` | Clean mirror of [gravitational/teleport](https://github.com/gravitational/teleport) upstream |
+| `obs-build-source` | Force-updated to the upstream tag currently being packaged |
+| `obs-build-inputs` | Force-updated to the `autobuild` commit whose patches and packaging match the current assets |
 
 ## Automation overview
 
@@ -72,20 +65,22 @@ flowchart TD
 
     subgraph GHA ["GitHub Actions"]
         master["master branch"]
+        inputs["obs-build-inputs branch"]
+        source["obs-build-source branch"]
         prep["prep-obs-source.yml\nbuild web assets · vendor Rust deps\nupload artifacts · trigger OBS"]
     end
 
-    subgraph OBS ["OBS — home:dannysauer:teleport"]
-        obs_pkg["teleport\nRPM + Deb"]
-        obs_ctr["teleport-container\nKIWI · Tumbleweed OCI"]
+    subgraph OBS ["OBS — home:dannysauer"]
+        obs_pkg["gravitational_teleport\nRPM + Deb"]
     end
-
-    sync["sync-registry.yml\npull registry.opensuse.org → push ghcr.io\npush Helm charts to ghcr.io OCI"]
 
     upstream -->|"sync-upstream.yml · every 6h"| master
     master -->|"new tag"| prep
-    prep --> obs_pkg & obs_ctr
-    obs_pkg & obs_ctr -->|"published · 15 min poll"| sync
+    prep --> source
+    prep --> inputs
+    prep --> obs_pkg
+    source --> obs_pkg
+    inputs --> obs_pkg
 ```
 
 ## Patching upstream

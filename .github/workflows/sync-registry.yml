@@ -3,26 +3,18 @@
 
 name: Sync OBS registry to ghcr.io
 
-# Triggered two ways:
-#
-# 1. OBS calls workflow_dispatch when a container build completes.
-#    OBS stores a fine-grained GitHub PAT with *only* Actions:write permission
-#    on this repo. That token cannot read code, push packages, or do anything
-#    else — so there is no meaningful security risk in OBS holding it.
-#
-# 2. Scheduled polling every 15 minutes as a fallback in case the OBS webhook
-#    is delayed or missed.
+# Manual-only until the OBS container package is wired to the same release
+# source as the RPM/Deb package. The current OBS integration only triggers
+# gravitational_teleport for RPM/Deb builds.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '*/15 * * * *'
 
 permissions:
   packages: write   # push to ghcr.io via GITHUB_TOKEN
-  contents: write   # commit Helm chart version updates
+  contents: read
 
 env:
-  OBS_IMAGE: registry.opensuse.org/home/dannysauer/teleport/teleport/teleport
+  OBS_IMAGE: registry.opensuse.org/home/dannysauer/teleport-container/teleport
   GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/teleport
 
 jobs:
@@ -44,6 +36,9 @@ jobs:
           if [ -z "$OBS_VERSION" ]; then
             echo "Could not determine OBS image version — skipping"
             echo "version=" >> "$GITHUB_OUTPUT"
+          elif ! printf '%s' "$OBS_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$'; then
+            echo "OBS image version is not a release version: $OBS_VERSION" >&2
+            echo "version=" >> "$GITHUB_OUTPUT"
           else
             echo "OBS image version: $OBS_VERSION"
             echo "version=$OBS_VERSION" >> "$GITHUB_OUTPUT"
@@ -54,14 +49,21 @@ jobs:
         run: |
           INFO=$(skopeo inspect --no-creds "docker://${{ env.GHCR_IMAGE }}:latest" 2>/dev/null || echo "{}")
           GHCR_VERSION=$(echo "$INFO" | jq -r '.Labels["org.opencontainers.image.version"] // empty')
+          if [ -n "$GHCR_VERSION" ] && ! printf '%s' "$GHCR_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$'; then
+            echo "Ignoring non-release ghcr.io version label: $GHCR_VERSION" >&2
+            GHCR_VERSION=""
+          fi
           echo "ghcr version: ${GHCR_VERSION:-none}"
           echo "version=${GHCR_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether to sync
         id: decision
+        env:
+          OBS_VERSION: ${{ steps.obs.outputs.version }}
+          GHCR_VERSION: ${{ steps.ghcr.outputs.version }}
         run: |
-          OBS="${{ steps.obs.outputs.version }}"
-          GHCR="${{ steps.ghcr.outputs.version }}"
+          OBS="$OBS_VERSION"
+          GHCR="$GHCR_VERSION"
           if [ -z "$OBS" ]; then
             echo "No OBS version available — nothing to do"
             echo "sync=false" >> "$GITHUB_OUTPUT"

@@ -5,6 +5,7 @@
 # The Teleport software it packages is licensed under AGPL-3.0-only.
 
 %global debug_package %{nil}
+%{!?_unitdir:%global _unitdir %{_prefix}/lib/systemd/system}
 
 # Translate RPM arch names to Go arch names
 %ifarch x86_64
@@ -25,10 +26,14 @@ License:        AGPL-3.0-only
 URL:            https://github.com/gravitational/teleport
 Source0:        teleport-%{version}.tar.gz
 # Pre-built webassets (built with Node/pnpm in GitHub Actions)
-Source1:        teleport-%{version}-webassets.tar.gz
+Source1:        teleport-webassets.tar.gz
 # Pre-vendored Rust deps for fdpass-teleport (from GitHub Actions cargo vendor)
-Source2:        teleport-%{version}-fdpass-vendor.tar.gz
-Patch0:         0001-implement-oidc-service-for-oss-sso-login.patch
+Source2:        teleport-fdpass-vendor.tar.gz
+# Manifest and checksums for stable build assets downloaded by _service
+Source3:        teleport-build-assets.env
+Source4:        teleport-build-assets.sha256
+# Vendored Go module dependencies from obs-service-go_modules
+Source5:        vendor.tar.gz
 
 BuildRequires:  go >= 1.25
 BuildRequires:  rust >= 1.94
@@ -43,10 +48,11 @@ BuildRequires:  git-core
 BuildRequires:  make
 BuildRequires:  gcc
 BuildRequires:  glibc-devel
-BuildRequires:  shasum
+BuildRequires:  coreutils
+BuildRequires:  systemd-rpm-macros
 
 Requires:       glibc
-Requires:       libpam0
+Requires:       pam
 Requires(post): systemd
 Requires(preun): systemd
 Requires(postun): systemd
@@ -60,6 +66,14 @@ web applications — with session recording, audit logging, and RBAC.
 %prep
 %setup -q -n teleport-%{version}
 
+# Verify that stable build-assets release files match this source version.
+(cd %{_sourcedir} && sha256sum -c %{SOURCE4})
+TELEPORT_VERSION=$(awk -F= '$1 == "TELEPORT_VERSION" && $2 ~ /^[0-9A-Za-z.+-]+$/ { print $2; found=1 } END { if (!found) exit 1 }' %{SOURCE3})
+if [ "$TELEPORT_VERSION" != "%{version}" ]; then
+    echo "build-assets version $TELEPORT_VERSION does not match source version %{version}" >&2
+    exit 1
+fi
+
 # Extract pre-built webassets alongside the source tree.
 # The webassets/ directory includes the oss-sha file; this causes the
 # build-webassets-if-changed.sh script (called by 'make full') to detect
@@ -70,8 +84,15 @@ tar xzf %{SOURCE1}
 # Extract pre-vendored Rust dependencies for fdpass-teleport.
 tar xzf %{SOURCE2}
 
-# Apply patches from the autobuild branch patches/ directory.
-%patch -P0 -p1
+# Extract vendored Go module dependencies from obs-service-go_modules.
+tar xzf %{SOURCE5}
+
+# Apply patches from the obs-build-inputs branch patches/ directory.
+for patch in %{_sourcedir}/*.patch; do
+    [ -e "$patch" ] || continue
+    echo "Applying $patch"
+    patch -p1 < "$patch"
+done
 
 %build
 export GOFLAGS="-mod=vendor"
@@ -140,5 +161,5 @@ install -dm700 %{buildroot}%{_localstatedir}/lib/teleport
 %dir %attr(700,root,root) %{_localstatedir}/lib/teleport
 
 %changelog
-* Thu Apr 01 2026 Teleport Autobuild <noreply@github.com> - 19.0.0-1
+* Sat Jun 27 2026 Teleport Autobuild <noreply@github.com> - 19.0.0-1
 - Automated build from upstream
