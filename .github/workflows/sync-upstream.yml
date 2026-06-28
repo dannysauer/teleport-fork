@@ -23,13 +23,13 @@ jobs:
       # contains workflow files, so we push with a GitHub App token that carries
       # Contents: write + Workflows: write instead.
       #
-      # Requires a GitHub App installed on this repo with those permissions, and
-      # two repo secrets: APP_ID and APP_PRIVATE_KEY.
+      # Requires a GitHub App installed on this repo with those permissions,
+      # the repo variable APP_ID, and the repo secret APP_PRIVATE_KEY.
       - name: Generate app token
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ secrets.APP_ID }}
+          app-id: ${{ vars.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Checkout master
