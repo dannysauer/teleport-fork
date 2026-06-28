@@ -363,6 +363,26 @@ jobs:
             --title "Build assets — $TAG" \
             --notes "Internal: build assets consumed by OBS. Currently tracking: **$TAG**."
 
+      - name: Mark completed source preparation
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BASE: ${{ needs.build-webassets.outputs.tag }}
+        run: |
+          # sync-upstream.yml uses this marker to avoid dispatching the same
+          # upstream stable release every six hours. Keep package Version clean;
+          # OBS strips any +autobuild marker back to X.Y.Z.
+          N=1
+          while gh release view "${BASE}+autobuild.${N}" --repo "${{ github.repository }}" >/dev/null 2>&1; do
+            N=$((N + 1))
+          done
+          RELEASE_TAG="${BASE}+autobuild.${N}"
+          gh release create "$RELEASE_TAG" \
+            --repo "${{ github.repository }}" \
+            --target obs-build-source \
+            --title "$RELEASE_TAG" \
+            --notes "Autobuild marker for upstream Teleport ${BASE}. Build assets are in the persistent build-assets release." \
+            --prerelease
+
       - name: Trigger OBS rebuild
         env:
           OBS_TRIGGER_TOKEN: ${{ secrets.OBS_TRIGGER_TOKEN }}
