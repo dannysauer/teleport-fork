@@ -59,7 +59,7 @@ index f8e776bbf1..b68766a3cb 100644
  		return nil, trace.Wrap(err)
 @@ -4285,13 +4264,6 @@ func (a *ServerWithRoles) ListOIDCConnectors(ctx context.Context, limit int, sta
  }
- 
+
  func (a *ServerWithRoles) CreateOIDCAuthRequest(ctx context.Context, req types.OIDCAuthRequest) (*types.OIDCAuthRequest, error) {
 -	if !a.authServer.modules.Features().GetEntitlement(entitlements.OIDC).Enabled {
 -		// TODO(zmb3): ideally we would wrap ErrRequiresEnterprise here, but
@@ -77,7 +77,7 @@ index a0efa72296..13b963c045 100644
 +++ b/lib/auth/sso_mfa.go
 @@ -137,6 +137,10 @@ func (a *Server) VerifySSOMFASession(ctx context.Context, username, sessionID, t
  	}
- 
+
  	// Verify the token matches.
 +	if mfaSess.Token == "" || token == "" {
 +		return nil, trace.AccessDenied("invalid SSO MFA challenge response")
