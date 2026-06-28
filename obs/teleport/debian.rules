@@ -3,37 +3,48 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Ubuntu 24.04 ships Go 1.22 which is too old for Teleport 19.
-# We install Go 1.25 from a tarball bundled as a source file (downloaded
-# by the OBS _service download_url during the service phase).
+# We install Go from tarballs bundled as source files. prep-obs-source.yml
+# reads build.assets/versions.mk and publishes these stable asset names.
 #
 # fdpass-teleport requires Rust 1.94 which is also too new for Ubuntu 24.04
 # repos. We use a pre-built binary downloaded by the OBS _service instead.
 
 include /usr/share/dpkg/architecture.mk
 
-GO_VERSION  := 1.25.9
 GOROOT      := $(CURDIR)/debian/go-toolchain
 GOPATH      := $(CURDIR)/debian/gopath
 BUILDDIR    := $(CURDIR)/debian/teleport-bin
+DEB_VERSION := $(shell dpkg-parsechangelog -S Version | sed 's/-[^-]*$$//')
 
 # Tarball names match what download_url fetches into the OBS source directory.
 # OBS places downloaded files one directory above the unpacked source.
-GO_TARBALL_amd64 := go$(GO_VERSION).linux-amd64.tar.gz
-GO_TARBALL_arm64 := go$(GO_VERSION).linux-arm64.tar.gz
+GO_TARBALL_amd64 := teleport-go-linux-amd64.tar.gz
+GO_TARBALL_arm64 := teleport-go-linux-arm64.tar.gz
 GO_TARBALL   := $(GO_TARBALL_$(DEB_HOST_ARCH))
 
 FDPASS_BIN_amd64 := fdpass-teleport-linux-amd64
 FDPASS_BIN_arm64 := fdpass-teleport-linux-arm64
 FDPASS_BIN   := $(FDPASS_BIN_$(DEB_HOST_ARCH))
 
-WEBASSETS_TARBALL := $(wildcard ../teleport-*-webassets.tar.gz)
+WEBASSETS_TARBALL := ../teleport-webassets.tar.gz
+BUILD_ASSETS_ENV := ../teleport-build-assets.env
+BUILD_ASSETS_SHA256 := ../teleport-build-assets.sha256
+VENDOR_TARBALL := ../vendor.tar.gz
 
 %:
 	dh $@
 
 override_dh_auto_configure:
-	# Apply patches from autobuild branch
-	for p in $$(find ../patches -name '*.patch' 2>/dev/null | sort); do \
+	# Verify that stable build-assets release files match this source version.
+	cd .. && sha256sum -c "$(notdir $(BUILD_ASSETS_SHA256))"
+	TELEPORT_VERSION=$$(awk -F= '$$1 == "TELEPORT_VERSION" && $$2 ~ /^[0-9A-Za-z.+-]+$$/ { print $$2; found=1 } END { if (!found) exit 1 }' $(BUILD_ASSETS_ENV)); \
+	if [ "$$TELEPORT_VERSION" != "$(DEB_VERSION)" ]; then \
+	    echo "build-assets version $$TELEPORT_VERSION does not match source version $(DEB_VERSION)" >&2; \
+	    exit 1; \
+	fi
+
+	# Apply patches from the obs-build-inputs branch.
+	for p in $$(find .. -maxdepth 1 -name '*.patch' | sort); do \
 	    echo "Applying $$p"; \
 	    patch -p1 < "$$p"; \
 	done
@@ -41,6 +52,9 @@ override_dh_auto_configure:
 	# Install Go toolchain from bundled tarball
 	mkdir -p $(GOROOT)
 	tar xzf ../$(GO_TARBALL) -C $(GOROOT) --strip-components=1
+
+	# Extract vendored Go module dependencies from obs-service-go_modules.
+	tar xzf $(VENDOR_TARBALL)
 
 override_dh_auto_build:
 	# Extract pre-built webassets (contains webassets/ dir + oss-sha)

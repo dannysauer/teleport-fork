@@ -51,11 +51,9 @@
       </containerconfig>
     </type>
     <!--
-      Version is updated by prep-obs-source.yml via osc.
-      Pin to a Tumbleweed snapshot for reproducibility — update this
-      periodically (e.g. when rebuilding for a new Teleport release) to
-      pick up base image security fixes.
-      Format: YYYYMMDD — check https://download.opensuse.org/history/
+      Container publishing is scaffolded but not wired into the active RPM/Deb
+      release flow. Update this version manually if you enable the optional
+      teleport-container OBS package.
     -->
     <version>19.0.0</version>
     <packagemanager>zypper</packagemanager>
@@ -71,9 +69,7 @@
   </repository>
 
   <!--
-    Minimal Tumbleweed base.
-    Pinned snapshot avoids surprise base-image changes between builds.
-    Update the snapshot date when you want base security fixes.
+    Minimal rolling Tumbleweed base.
   -->
   <repository type="rpm-md" alias="tumbleweed-oss">
     <source path="https://download.opensuse.org/tumbleweed/repo/oss/"/>

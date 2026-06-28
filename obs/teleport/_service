@@ -2,19 +2,22 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <services>
   <!--
-    Fetch Teleport source from the fork's master branch.
-    master is a clean mirror of upstream; obs_scm extracts the version
-    from the most recent ancestor tag via @PARENT_TAG@.
+    Fetch Teleport source from the fork's obs-build-source branch.
+    prep-obs-source.yml force-updates that branch to the exact upstream tag
+    that produced the build-assets release, so the source and prebuilt assets
+    stay tied to the same release identity.
 
     This service is triggered by prep-obs-source.yml (via OBS trigger token)
-    after it has uploaded fresh build assets to the build-assets release.
+    after it has updated obs-build-source and uploaded fresh build assets.
     No manual _service edits are needed between versions.
   -->
-  <service name="obs_scm">
+  <service name="tar_scm">
     <param name="url">https://github.com/dannysauer/teleport-fork</param>
     <param name="scm">git</param>
-    <param name="revision">master</param>
+    <param name="revision">obs-build-source</param>
+    <param name="submodules">disable</param>
     <param name="versionformat">@PARENT_TAG@</param>
+    <param name="match-tag">v*</param>
     <param name="versionrewrite-pattern">v(.*)</param>
     <param name="exclude">.git</param>
     <param name="exclude">e</param>
@@ -25,36 +28,33 @@
   </service>
 
   <!--
-    Fetch packaging files from the autobuild branch and extract them
+    Fetch packaging files from the obs-build-inputs branch and extract them
     directly into the OBS package source directory.  This means only
-    _service itself needs to be uploaded to OBS to bootstrap a package —
-    the spec and debian/ files are kept in Git alongside everything else.
+    _service itself needs to be uploaded to OBS to bootstrap a package.
+    The spec and debian.* files are pinned to the same autobuild commit that
+    produced the downloaded build-assets release.
   -->
   <service name="obs_scm">
     <param name="url">https://github.com/dannysauer/teleport-fork</param>
     <param name="scm">git</param>
-    <param name="revision">autobuild</param>
+    <param name="revision">obs-build-inputs</param>
     <param name="subdir">obs/teleport</param>
     <param name="filename">packaging</param>
     <param name="extract">teleport.spec</param>
-    <param name="extract">debian/changelog</param>
-    <param name="extract">debian/compat</param>
-    <param name="extract">debian/control</param>
-    <param name="extract">debian/copyright</param>
-    <param name="extract">debian/rules</param>
+    <param name="extract">debian.*</param>
   </service>
 
   <!--
-    Fetch patch files from the autobuild branch patches/ directory.
-    These are applied by the spec (%patch) and debian/rules.
+    Fetch patch files from the obs-build-inputs branch patches/ directory.
+    These are applied in sorted filename order by the spec and debian/rules.
   -->
   <service name="obs_scm">
     <param name="url">https://github.com/dannysauer/teleport-fork</param>
     <param name="scm">git</param>
-    <param name="revision">autobuild</param>
+    <param name="revision">obs-build-inputs</param>
     <param name="subdir">patches</param>
     <param name="filename">patches</param>
-    <param name="extract">0001-implement-oidc-service-for-oss-sso-login.patch</param>
+    <param name="extract">*.patch</param>
   </service>
 
   <!--
@@ -62,6 +62,11 @@
     Runs during the OBS service phase (which has network access).
     Result is a vendor/ directory added to the source tarball.
   -->
+  <service name="recompress">
+    <param name="file">teleport*.tar</param>
+    <param name="compression">gz</param>
+  </service>
+
   <service name="go_modules">
     <param name="archive">teleport*.tar.gz</param>
   </service>
@@ -82,6 +87,18 @@
     <param name="host">github.com</param>
     <param name="protocol">https</param>
     <param name="path">/dannysauer/teleport-fork/releases/download/build-assets/teleport-webassets.tar.gz</param>
+  </service>
+
+  <!-- Manifest and checksums for the stable build-assets release files. -->
+  <service name="download_url">
+    <param name="host">github.com</param>
+    <param name="protocol">https</param>
+    <param name="path">/dannysauer/teleport-fork/releases/download/build-assets/teleport-build-assets.env</param>
+  </service>
+  <service name="download_url">
+    <param name="host">github.com</param>
+    <param name="protocol">https</param>
+    <param name="path">/dannysauer/teleport-fork/releases/download/build-assets/teleport-build-assets.sha256</param>
   </service>
 
   <!-- Pre-vendored Rust deps for fdpass-teleport (tool/fdpass-teleport/vendor/) -->
@@ -109,16 +126,17 @@
   <!--
     Go 1.25 toolchain tarballs for Ubuntu 24.04 builds.
     Ubuntu 24.04's packaged Go (1.22) is too old for Teleport 19.
-    Update these when build.assets/versions.mk changes GO_VERSION.
+    prep-obs-source.yml reads build.assets/versions.mk and publishes the
+    matching Go tarballs with these stable asset names.
   -->
   <service name="download_url">
-    <param name="host">go.dev</param>
+    <param name="host">github.com</param>
     <param name="protocol">https</param>
-    <param name="path">/dl/go1.25.9.linux-amd64.tar.gz</param>
+    <param name="path">/dannysauer/teleport-fork/releases/download/build-assets/teleport-go-linux-amd64.tar.gz</param>
   </service>
   <service name="download_url">
-    <param name="host">go.dev</param>
+    <param name="host">github.com</param>
     <param name="protocol">https</param>
-    <param name="path">/dl/go1.25.9.linux-arm64.tar.gz</param>
+    <param name="path">/dannysauer/teleport-fork/releases/download/build-assets/teleport-go-linux-arm64.tar.gz</param>
   </service>
 </services>

@@ -3,20 +3,20 @@
 
 name: Prepare OBS source
 
-# Triggered by a new version tag being pushed to master (by sync-upstream.yml),
-# or manually for a specific tag.
+# Triggered manually or by sync-upstream.yml after it pushes a new upstream tag.
 on:
-  push:
-    tags:
-      - 'v[0-9]*'
   workflow_dispatch:
     inputs:
       tag:
         description: 'Tag to build (e.g. v19.0.4)'
         required: true
 
+concurrency:
+  group: prep-obs-source-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
 permissions:
-  contents: write  # to create/update GitHub Releases
+  contents: read
 
 jobs:
   # ── 1. Build web assets ────────────────────────────────────────────────────
@@ -25,12 +25,28 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      autobuild_sha: ${{ steps.autobuild.outputs.sha }}
 
     steps:
       - name: Resolve tag
         id: version
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${INPUT_TAG:-$REF_NAME}"
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*)
+              ;;
+            *)
+              echo "Invalid tag: $TAG" >&2
+              exit 1
+              ;;
+          esac
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$'; then
+            echo "Invalid tag: $TAG" >&2
+            exit 1
+          fi
           VERSION="${TAG#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -39,12 +55,25 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ steps.version.outputs.tag }}
+          persist-credentials: false
+
+      - name: Resolve autobuild revision
+        id: autobuild
+        run: |
+          AUTOBUILD_SHA=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/autobuild | awk '{print $1}')
+          if ! printf '%s' "$AUTOBUILD_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Could not resolve autobuild revision" >&2
+            exit 1
+          fi
+          echo "sha=$AUTOBUILD_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Apply patches (if any)
+        env:
+          AUTOBUILD_SHA: ${{ steps.autobuild.outputs.sha }}
         run: |
-          git fetch origin autobuild
+          git fetch --depth=1 origin "$AUTOBUILD_SHA"
           TMP=$(mktemp -d)
-          git archive origin/autobuild patches/ | tar -x -C "$TMP" 2>/dev/null || true
+          git archive "$AUTOBUILD_SHA" patches/ | tar -x -C "$TMP" 2>/dev/null || true
           PATCHES=$(find "$TMP/patches" -name '*.patch' | sort 2>/dev/null)
           if [ -n "$PATCHES" ]; then
             echo "Applying patches:"
@@ -61,14 +90,15 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Install pnpm
-        run: npm install -g pnpm
-
-      - name: Install web dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack install
 
       - name: Build web assets
-        run: make build-ui-oss
+        run: |
+          make ensure-webassets
+          test -s webassets/oss-sha
         # Populates webassets/teleport/ and writes webassets/oss-sha.
         # The oss-sha file lets build-webassets-if-changed.sh detect these as
         # up-to-date in OBS without needing to re-run pnpm.
@@ -96,6 +126,25 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.build-webassets.outputs.tag }}
+          persist-credentials: false
+
+      - name: Apply patches (if any)
+        env:
+          AUTOBUILD_SHA: ${{ needs.build-webassets.outputs.autobuild_sha }}
+        run: |
+          git fetch --depth=1 origin "$AUTOBUILD_SHA"
+          TMP=$(mktemp -d)
+          git archive "$AUTOBUILD_SHA" patches/ | tar -x -C "$TMP" 2>/dev/null || true
+          PATCHES=$(find "$TMP/patches" -name '*.patch' | sort 2>/dev/null)
+          if [ -n "$PATCHES" ]; then
+            echo "Applying patches:"
+            for p in $PATCHES; do
+              echo "  $p"
+              git apply "$p"
+            done
+          else
+            echo "No patches to apply."
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
@@ -136,6 +185,25 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.build-webassets.outputs.tag }}
+          persist-credentials: false
+
+      - name: Apply patches (if any)
+        env:
+          AUTOBUILD_SHA: ${{ needs.build-webassets.outputs.autobuild_sha }}
+        run: |
+          git fetch --depth=1 origin "$AUTOBUILD_SHA"
+          TMP=$(mktemp -d)
+          git archive "$AUTOBUILD_SHA" patches/ | tar -x -C "$TMP" 2>/dev/null || true
+          PATCHES=$(find "$TMP/patches" -name '*.patch' | sort 2>/dev/null)
+          if [ -n "$PATCHES" ]; then
+            echo "Applying patches:"
+            for p in $PATCHES; do
+              echo "  $p"
+              git apply "$p"
+            done
+          else
+            echo "No patches to apply."
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
@@ -169,6 +237,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     needs: [build-webassets, build-fdpass, vendor-fdpass]
+    permissions:
+      contents: write
 
     steps:
       - name: Download all artifacts
@@ -176,14 +246,87 @@ jobs:
         with:
           path: artifacts/
 
+      # obs-build-source mirrors an upstream tag, including upstream workflow
+      # files. Use the same GitHub App token as sync-upstream so the push is
+      # allowed to update workflow files.
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Checkout source at tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.build-webassets.outputs.tag }}
+          path: teleport-src
+          persist-credentials: false
+
+      - name: Update OBS source branch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ needs.build-webassets.outputs.tag }}
+          AUTOBUILD_SHA: ${{ needs.build-webassets.outputs.autobuild_sha }}
+        run: |
+          cd teleport-src
+          git fetch --depth=1 origin "$AUTOBUILD_SHA"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:refs/heads/obs-build-source" \
+            --force
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "$AUTOBUILD_SHA:refs/heads/obs-build-inputs" \
+            --force
+          echo "OBS source branch now points at $TAG"
+          echo "OBS input branch now points at $AUTOBUILD_SHA"
+
       - name: Stage assets with fixed names
         # OBS _service uses stable URLs that never change between versions.
         # We update a persistent "build-assets" release in-place each run.
+        env:
+          TAG: ${{ needs.build-webassets.outputs.tag }}
+          VERSION: ${{ needs.build-webassets.outputs.version }}
+          AUTOBUILD_SHA: ${{ needs.build-webassets.outputs.autobuild_sha }}
         run: |
           cp artifacts/webassets/teleport-webassets.tar.gz         teleport-webassets.tar.gz
           cp artifacts/fdpass-vendor/teleport-fdpass-vendor.tar.gz teleport-fdpass-vendor.tar.gz
           cp artifacts/fdpass-amd64/fdpass-teleport-linux-amd64    fdpass-teleport-linux-amd64
           cp artifacts/fdpass-arm64/fdpass-teleport-linux-arm64    fdpass-teleport-linux-arm64
+
+          GOLANG_VERSION=$(awk '$1 == "GOLANG_VERSION" && $2 == "?=" { print $3; exit }' teleport-src/build.assets/versions.mk)
+          if [ -z "$GOLANG_VERSION" ]; then
+            echo "Could not find GOLANG_VERSION in build.assets/versions.mk" >&2
+            exit 1
+          fi
+
+          echo "Using Go toolchain: $GOLANG_VERSION"
+          printf '%s\n' "$GOLANG_VERSION" > teleport-go-version.txt
+          curl -fsSL -o teleport-go-linux-amd64.tar.gz "https://go.dev/dl/${GOLANG_VERSION}.linux-amd64.tar.gz"
+          curl -fsSL -o teleport-go-linux-arm64.tar.gz "https://go.dev/dl/${GOLANG_VERSION}.linux-arm64.tar.gz"
+          curl -fsSL "https://go.dev/dl/${GOLANG_VERSION}.linux-amd64.tar.gz.sha256" \
+            | awk '{print $1 "  teleport-go-linux-amd64.tar.gz"}' \
+            | sha256sum -c -
+          curl -fsSL "https://go.dev/dl/${GOLANG_VERSION}.linux-arm64.tar.gz.sha256" \
+            | awk '{print $1 "  teleport-go-linux-arm64.tar.gz"}' \
+            | sha256sum -c -
+
+          cat > teleport-build-assets.env <<EOF
+          TELEPORT_TAG=$TAG
+          TELEPORT_VERSION=$VERSION
+          AUTOBUILD_SHA=$AUTOBUILD_SHA
+          GOLANG_VERSION=$GOLANG_VERSION
+          EOF
+
+          sha256sum \
+            teleport-build-assets.env \
+            teleport-webassets.tar.gz \
+            teleport-fdpass-vendor.tar.gz \
+            fdpass-teleport-linux-amd64 \
+            fdpass-teleport-linux-arm64 \
+            teleport-go-linux-amd64.tar.gz \
+            teleport-go-linux-arm64.tar.gz \
+            teleport-go-version.txt \
+            > teleport-build-assets.sha256
 
       - name: Create or update build-assets release
         env:
@@ -207,7 +350,12 @@ jobs:
             teleport-webassets.tar.gz \
             teleport-fdpass-vendor.tar.gz \
             fdpass-teleport-linux-amd64 \
-            fdpass-teleport-linux-arm64
+            fdpass-teleport-linux-arm64 \
+            teleport-go-linux-amd64.tar.gz \
+            teleport-go-linux-arm64.tar.gz \
+            teleport-go-version.txt \
+            teleport-build-assets.env \
+            teleport-build-assets.sha256
 
           # Update the title so it's obvious which version the assets track.
           gh release edit build-assets \
@@ -221,10 +369,10 @@ jobs:
           TAG: ${{ needs.build-webassets.outputs.tag }}
         run: |
           # Assets are uploaded above, so timing is safe.
-          # OBS _service uses master (which is already at this tag) + the
-          # build-assets release URLs, so no _service file update is needed.
-          OBS_PROJECT="home:dannysauer:teleport"
-          for package in teleport teleport-container; do
+          # OBS _service uses obs-build-source, updated above to this tag,
+          # plus the build-assets release URLs.
+          OBS_PROJECT="home:dannysauer"
+          for package in gravitational_teleport; do
             echo "Triggering OBS rebuild: $OBS_PROJECT / $package ($TAG)"
             curl -sf -X POST \
               "https://build.opensuse.org/trigger/runservice?project=${OBS_PROJECT}&package=${package}&token=${OBS_TRIGGER_TOKEN}" \

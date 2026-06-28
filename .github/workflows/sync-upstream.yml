@@ -15,7 +15,7 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     outputs:
-      new_tags: ${{ steps.push-tags.outputs.new_tags }}
+      new_tags: ${{ steps.push-tag.outputs.new_tags }}
 
     steps:
       # The built-in GITHUB_TOKEN can never push changes under .github/workflows/,
@@ -23,8 +23,9 @@ jobs:
       # contains workflow files, so we push with a GitHub App token that carries
       # Contents: write + Workflows: write instead.
       #
-      # Requires a GitHub App installed on this repo with those permissions,
-      # the repo variable APP_ID, and the repo secret APP_PRIVATE_KEY.
+      # Requires a GitHub App installed on this repo with Contents: write,
+      # Workflows: write, and Actions: write; the repo variable APP_ID; and the
+      # repo secret APP_PRIVATE_KEY.
       - name: Generate app token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -67,39 +68,47 @@ jobs:
           # Patches (if any) live in patches/ on this branch and are applied at build time.
           git push origin upstream/master:refs/heads/master --force
 
-      - name: Push new tags
-        id: push-tags
+      - name: Push latest release tag
+        id: push-tag
         run: |
-          # Collect tags that exist upstream but not in origin
-          UPSTREAM_TAGS=$(git tag --merged upstream/master | sort -V)
+          # Build only the latest stable upstream release tag. The upstream repo
+          # has many historical and pre-release tags; pushing all missing tags
+          # on first setup would fan out into a large OBS build storm.
+          LATEST_UPSTREAM_TAG=$(
+            git tag --merged upstream/master \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | sort -V \
+              | tail -1
+          )
           ORIGIN_TAGS=$(git ls-remote --tags origin | awk '{print $2}' | sed 's|refs/tags/||' | sed 's|\^{}||' | sort -V | uniq)
 
-          NEW_TAGS=""
-          for tag in $UPSTREAM_TAGS; do
-            if ! echo "$ORIGIN_TAGS" | grep -qx "$tag"; then
-              NEW_TAGS="$NEW_TAGS $tag"
-            fi
-          done
-          NEW_TAGS="${NEW_TAGS# }"  # trim leading space
+          if [ -z "$LATEST_UPSTREAM_TAG" ]; then
+            echo "Could not determine latest upstream release tag" >&2
+            exit 1
+          fi
 
-          if [ -n "$NEW_TAGS" ]; then
-            echo "Pushing new tags: $NEW_TAGS"
-            for tag in $NEW_TAGS; do
-              git push origin "refs/tags/$tag"
-            done
-            # Output just the latest new tag for job summary
-            LATEST=$(echo "$NEW_TAGS" | tr ' ' '\n' | sort -V | tail -1)
-            echo "new_tags=$LATEST" >> "$GITHUB_OUTPUT"
+          if ! echo "$ORIGIN_TAGS" | grep -qx "$LATEST_UPSTREAM_TAG"; then
+            echo "Pushing new tag: $LATEST_UPSTREAM_TAG"
+            git push origin "refs/tags/$LATEST_UPSTREAM_TAG"
+            echo "new_tags=$LATEST_UPSTREAM_TAG" >> "$GITHUB_OUTPUT"
           else
-            echo "No new tags to push"
+            echo "Latest release tag already exists in origin: $LATEST_UPSTREAM_TAG"
             echo "new_tags=" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Dispatch OBS source preparation
+        if: steps.push-tag.outputs.new_tags != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.push-tag.outputs.new_tags }}
+        run: |
+          gh workflow run prep-obs-source.yml --ref autobuild -f tag="$TAG"
 
       - name: Summary
         run: |
           echo "### Sync result" >> "$GITHUB_STEP_SUMMARY"
           echo "- master updated: ${{ steps.check.outputs.needs_update }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Latest new tag: ${{ steps.push-tags.outputs.new_tags || 'none' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Latest new tag: ${{ steps.push-tag.outputs.new_tags || 'none' }}" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Disable upstream workflows that don't belong on this fork ───────────────
   # master is a pristine mirror of gravitational/teleport, so it carries

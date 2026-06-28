@@ -1,0 +1,10 @@
+rebuild_gravitational_teleport:
+  steps:
+    - trigger_services:
+        project: home:dannysauer
+        package: gravitational_teleport
+  filters:
+    event: push
+    branches:
+      only:
+        - autobuild
