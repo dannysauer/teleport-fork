@@ -23,7 +23,6 @@
     <param name="versionrewrite-pattern">v([0-9]+\.[0-9]+\.[0-9]+).*</param>
     <param name="versionrewrite-replacement">\1</param>
     <param name="exclude">.git</param>
-    <param name="exclude">e</param>
     <param name="exclude">e2e</param>
     <param name="exclude">rfd</param>
     <param name="exclude">docs</param>
