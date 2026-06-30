@@ -24,7 +24,7 @@ Release:        1%{?dist}
 Summary:        Identity-aware access proxy for infrastructure
 License:        AGPL-3.0-only
 URL:            https://github.com/gravitational/teleport
-Source0:        teleport-%{version}.tar.gz
+Source0:        teleport-%{version}.tar
 # Pre-built webassets (built with Node/pnpm in GitHub Actions)
 Source1:        teleport-webassets.tar.gz
 # Pre-vendored Rust deps for fdpass-teleport (from GitHub Actions cargo vendor)
