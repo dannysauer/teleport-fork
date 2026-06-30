@@ -30,20 +30,18 @@
   </service>
 
   <!--
-    Fetch packaging files from the obs-build-inputs branch and extract them
-    directly into the OBS package source directory.  This means only
-    _service itself needs to be uploaded to OBS to bootstrap a package.
-    The spec and debian.* files are pinned to the same autobuild commit that
-    produced the downloaded build assets.
+    Fetch the RPM spec from the obs-build-inputs branch and extract it into
+    the OBS package source directory. Debian control files must be committed as
+    real package sources because OBS selects the build description before
+    unpacking service-generated packaging cpio archives.
   -->
-  <service name="obs_scm" mode="trylocal">
+  <service name="obs_scm">
     <param name="url">https://github.com/dannysauer/teleport-fork</param>
     <param name="scm">git</param>
     <param name="revision">obs-build-inputs</param>
     <param name="subdir">obs/teleport</param>
     <param name="filename">packaging</param>
     <param name="extract">teleport.spec</param>
-    <param name="extract">debian.*</param>
   </service>
 
   <!--
@@ -66,7 +64,7 @@
   -->
 
   <!-- Update spec Version: and debian changelog from the extracted git tag. -->
-  <service name="set_version" mode="trylocal">
+  <service name="set_version">
     <param name="basename">teleport</param>
   </service>
 
