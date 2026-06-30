@@ -90,5 +90,6 @@
     <param name="extract">fdpass-teleport-linux-arm64</param>
     <param name="extract">teleport-go-linux-amd64.tar.gz</param>
     <param name="extract">teleport-go-linux-arm64.tar.gz</param>
+    <param name="extract">teleport-go-version.txt</param>
   </service>
 </services>
