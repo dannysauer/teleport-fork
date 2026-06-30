@@ -303,12 +303,35 @@ jobs:
           printf '%s\n' "$GOLANG_VERSION" > teleport-go-version.txt
           curl -fsSL -o teleport-go-linux-amd64.tar.gz "https://go.dev/dl/${GOLANG_VERSION}.linux-amd64.tar.gz"
           curl -fsSL -o teleport-go-linux-arm64.tar.gz "https://go.dev/dl/${GOLANG_VERSION}.linux-arm64.tar.gz"
-          curl -fsSL "https://go.dev/dl/${GOLANG_VERSION}.linux-amd64.tar.gz.sha256" \
-            | awk '{print $1 "  teleport-go-linux-amd64.tar.gz"}' \
-            | sha256sum -c -
-          curl -fsSL "https://go.dev/dl/${GOLANG_VERSION}.linux-arm64.tar.gz.sha256" \
-            | awk '{print $1 "  teleport-go-linux-arm64.tar.gz"}' \
-            | sha256sum -c -
+          curl -fsSL -o go-downloads.json "https://go.dev/dl/?mode=json&include=all"
+          python3 - "$GOLANG_VERSION" <<'PY' > go-toolchain.sha256
+          import json
+          import sys
+
+          version = sys.argv[1]
+          wanted = {
+              f"{version}.linux-amd64.tar.gz": "teleport-go-linux-amd64.tar.gz",
+              f"{version}.linux-arm64.tar.gz": "teleport-go-linux-arm64.tar.gz",
+          }
+
+          with open("go-downloads.json", encoding="utf-8") as f:
+              releases = json.load(f)
+
+          found = {}
+          for release in releases:
+              for file in release.get("files", []):
+                  filename = file.get("filename")
+                  if filename in wanted:
+                      found[filename] = file.get("sha256")
+
+          missing = sorted(set(wanted) - set(found))
+          if missing:
+              raise SystemExit(f"missing Go checksums: {', '.join(missing)}")
+
+          for filename, output_name in wanted.items():
+              print(f"{found[filename]}  {output_name}")
+          PY
+          sha256sum -c go-toolchain.sha256
 
           cat > teleport-build-assets.env <<EOF
           TELEPORT_TAG=$TAG
