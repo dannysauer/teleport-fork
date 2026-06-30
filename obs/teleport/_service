@@ -4,7 +4,7 @@
   <!--
     Fetch Teleport source from the fork's obs-build-source branch.
     prep-obs-source.yml force-updates that branch to the exact upstream stable
-    tag that produced the build-assets release, so the source and prebuilt
+    tag that produced the obs-build-assets branch, so the source and prebuilt
     assets stay tied to the same release identity. Stable Teleport releases are
     tagged on upstream release branches, not necessarily on master; the sync
     workflow detects the newest clean vX.Y.Z tag across all upstream tags.
@@ -35,7 +35,7 @@
     directly into the OBS package source directory.  This means only
     _service itself needs to be uploaded to OBS to bootstrap a package.
     The spec and debian.* files are pinned to the same autobuild commit that
-    produced the downloaded build-assets release.
+    produced the downloaded build assets.
   -->
   <service name="obs_scm">
     <param name="url">https://github.com/dannysauer/teleport-fork</param>
@@ -80,66 +80,22 @@
   </service>
 
   <!--
-    The following assets are fetched from the persistent "build-assets" release
-    in the GitHub fork. prep-obs-source.yml overwrites these files in-place each
-    time a new upstream tag is processed, so these URLs never need to change.
+    Fetch pre-built assets from the obs-build-assets branch. GitHub releases are
+    immutable in this repository, so prep-obs-source.yml force-updates a branch
+    with stable filenames for OBS instead of overwriting release assets.
   -->
-
-  <!-- Pre-built web assets (Node/pnpm build, not available in OBS) -->
-  <service name="download_url">
-    <param name="host">github.com</param>
-    <param name="protocol">https</param>
-    <param name="path">/dannysauer/teleport-fork/releases/download/build-assets/teleport-webassets.tar.gz</param>
-  </service>
-
-  <!-- Manifest and checksums for the stable build-assets release files. -->
-  <service name="download_url">
-    <param name="host">github.com</param>
-    <param name="protocol">https</param>
-    <param name="path">/dannysauer/teleport-fork/releases/download/build-assets/teleport-build-assets.env</param>
-  </service>
-  <service name="download_url">
-    <param name="host">github.com</param>
-    <param name="protocol">https</param>
-    <param name="path">/dannysauer/teleport-fork/releases/download/build-assets/teleport-build-assets.sha256</param>
-  </service>
-
-  <!-- Pre-vendored Rust deps for fdpass-teleport (tool/fdpass-teleport/vendor/) -->
-  <service name="download_url">
-    <param name="host">github.com</param>
-    <param name="protocol">https</param>
-    <param name="path">/dannysauer/teleport-fork/releases/download/build-assets/teleport-fdpass-vendor.tar.gz</param>
-  </service>
-
-  <!--
-    Pre-built fdpass-teleport binaries for Ubuntu 24.04.
-    Ubuntu 24.04 ships Rust 1.75 which is too old; Tumbleweed builds from source.
-  -->
-  <service name="download_url">
-    <param name="host">github.com</param>
-    <param name="protocol">https</param>
-    <param name="path">/dannysauer/teleport-fork/releases/download/build-assets/fdpass-teleport-linux-amd64</param>
-  </service>
-  <service name="download_url">
-    <param name="host">github.com</param>
-    <param name="protocol">https</param>
-    <param name="path">/dannysauer/teleport-fork/releases/download/build-assets/fdpass-teleport-linux-arm64</param>
-  </service>
-
-  <!--
-    Go 1.25 toolchain tarballs for Ubuntu 24.04 builds.
-    Ubuntu 24.04's packaged Go (1.22) is too old for Teleport 19.
-    prep-obs-source.yml reads build.assets/versions.mk and publishes the
-    matching Go tarballs with these stable asset names.
-  -->
-  <service name="download_url">
-    <param name="host">github.com</param>
-    <param name="protocol">https</param>
-    <param name="path">/dannysauer/teleport-fork/releases/download/build-assets/teleport-go-linux-amd64.tar.gz</param>
-  </service>
-  <service name="download_url">
-    <param name="host">github.com</param>
-    <param name="protocol">https</param>
-    <param name="path">/dannysauer/teleport-fork/releases/download/build-assets/teleport-go-linux-arm64.tar.gz</param>
+  <service name="obs_scm">
+    <param name="url">https://github.com/dannysauer/teleport-fork</param>
+    <param name="scm">git</param>
+    <param name="revision">obs-build-assets</param>
+    <param name="filename">build-assets</param>
+    <param name="extract">teleport-webassets.tar.gz</param>
+    <param name="extract">teleport-build-assets.env</param>
+    <param name="extract">teleport-build-assets.sha256</param>
+    <param name="extract">teleport-fdpass-vendor.tar.gz</param>
+    <param name="extract">fdpass-teleport-linux-amd64</param>
+    <param name="extract">fdpass-teleport-linux-arm64</param>
+    <param name="extract">teleport-go-linux-amd64.tar.gz</param>
+    <param name="extract">teleport-go-linux-arm64.tar.gz</param>
   </service>
 </services>

@@ -351,26 +351,13 @@ jobs:
             teleport-go-version.txt \
             > teleport-build-assets.sha256
 
-      - name: Replace build-assets release
+      - name: Update OBS assets branch
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ needs.build-webassets.outputs.tag }}
         run: |
-          # This repository has immutable releases enabled, so assets must be
-          # attached during release creation. Recreate the persistent
-          # build-assets tag each run; OBS download URLs stay stable.
-          gh release delete build-assets \
-            --repo "${{ github.repository }}" \
-            --cleanup-tag \
-            --yes \
-            2>/dev/null || true
-
-          gh release create build-assets \
-            --repo "${{ github.repository }}" \
-            --title "Build assets - $TAG" \
-            --notes "Internal: build assets consumed by OBS. Currently tracking: **$TAG**." \
-            --prerelease \
-            --target autobuild \
+          mkdir obs-assets
+          cp \
             teleport-webassets.tar.gz \
             teleport-fdpass-vendor.tar.gz \
             fdpass-teleport-linux-amd64 \
@@ -379,27 +366,19 @@ jobs:
             teleport-go-linux-arm64.tar.gz \
             teleport-go-version.txt \
             teleport-build-assets.env \
-            teleport-build-assets.sha256
+            teleport-build-assets.sha256 \
+            obs-assets/
 
-      - name: Mark completed source preparation
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          BASE: ${{ needs.build-webassets.outputs.tag }}
-        run: |
-          # sync-upstream.yml uses this marker to avoid dispatching the same
-          # upstream stable release every six hours. Keep package Version clean;
-          # OBS strips any +autobuild marker back to X.Y.Z.
-          N=1
-          while gh release view "${BASE}+autobuild.${N}" --repo "${{ github.repository }}" >/dev/null 2>&1; do
-            N=$((N + 1))
-          done
-          RELEASE_TAG="${BASE}+autobuild.${N}"
-          gh release create "$RELEASE_TAG" \
-            --repo "${{ github.repository }}" \
-            --target obs-build-source \
-            --title "$RELEASE_TAG" \
-            --notes "Autobuild marker for upstream Teleport ${BASE}. Build assets are in the persistent build-assets release." \
-            --prerelease
+          cd obs-assets
+          git init
+          git config user.name "teleport-fork automation"
+          git config user.email "noreply@github.com"
+          git checkout -b obs-build-assets
+          git add .
+          git commit -m "Build assets for ${TAG}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:refs/heads/obs-build-assets" \
+            --force
 
       - name: Trigger OBS rebuild
         env:
@@ -408,7 +387,7 @@ jobs:
         run: |
           # Assets are uploaded above, so timing is safe.
           # OBS _service uses obs-build-source, updated above to this tag,
-          # plus the build-assets release URLs.
+          # plus obs-build-assets, updated above with matching assets.
           OBS_PROJECT="home:dannysauer"
           for package in gravitational_teleport; do
             echo "Triggering OBS rebuild: $OBS_PROJECT / $package ($TAG)"

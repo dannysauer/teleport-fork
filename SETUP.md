@@ -82,7 +82,8 @@ After `prep-obs-source.yml` has published the build assets, OBS service runs wil
 - Fetch `teleport.spec` and `debian.*` packaging files from the
   `obs-build-inputs` branch
 - Vendor Go modules
-- Download pre-built web assets and fdpass binaries from the `build-assets` release
+- Fetch pre-built web assets, fdpass binaries, and Go toolchains from the
+  `obs-build-assets` branch
 
 You can upload `_service` via the OBS web UI or the `osc` CLI:
 
@@ -96,19 +97,17 @@ osc commit -m "bootstrap gravitational_teleport package"
 
 > **Note:** The `_service` file references `github.com/dannysauer/teleport-fork`.
 > If you are reproducing this under your own account, update the
-> `<param name="url">` values and GitHub release download paths before
-> uploading.
+> `<param name="url">` values before uploading.
 
 ---
 
 ### Bootstrap ordering
 
-The `_service` file downloads assets from the GitHub `build-assets` release.
-That release does not exist until `prep-obs-source.yml` runs for the first
-target tag. A first OBS service run can fail during bootstrap; run
-`prep-obs-source.yml` manually for the tag you want to build, verify the
-`build-assets` release exists, then re-run services or push to `autobuild` to
-trigger OBS.
+The `_service` file fetches assets from the GitHub `obs-build-assets` branch.
+That branch does not exist until `prep-obs-source.yml` runs for the first target
+tag. A first OBS service run can fail during bootstrap; run `prep-obs-source.yml`
+manually for the tag you want to build, verify the `obs-build-assets` branch
+exists, then re-run services or push to `autobuild` to trigger OBS.
 
 ---
 
@@ -160,7 +159,6 @@ before your first commit:
 | `.github/workflows/sync-registry.yml` | `OBS_IMAGE` env var (OBS project path) |
 | `.github/workflows/sync-registry.yml` | `GHCR_IMAGE` env var (if your image name differs) |
 | `obs/teleport/_service` | `<param name="url">` — point to your fork |
-| `obs/teleport/_service` | GitHub release `download_url` paths — point to your fork's `build-assets` release |
 | `obs/teleport-container/config.xml` | OCI label `org.opencontainers.image.source` |
 | `prep-obs-source.yml` | `OBS_PROJECT` variable inside the trigger step |
 | `.obs/workflows.yml` | OBS project and package names |
@@ -201,22 +199,21 @@ if that release has not already been prepared. Stable Teleport releases are
 tagged on upstream release branches, so the workflow scans all upstream tags for
 clean `vX.Y.Z` releases instead of using tags merged into `master`.
 
-If you need to rebuild a tag that already has an `+autobuild.N` marker release,
-run `prep-obs-source.yml` manually for the tag you want to build.
+If you need to rebuild a tag that `obs-build-source` already points at, run
+`prep-obs-source.yml` manually for the tag you want to build.
 
 Pushing `autobuild` by itself only re-runs OBS services if you installed
-`.obs/workflows.yml`; it does not build or upload GitHub release assets.
+`.obs/workflows.yml`; it does not build or upload GitHub build assets.
 
 The release pipeline is:
 
 1. `sync-upstream.yml` — syncs `master`, finds the latest upstream stable tag,
    pushes it to this fork if missing, and dispatches `prep-obs-source.yml` unless
-   an `+autobuild.N` marker release already exists for that upstream tag.
+   `obs-build-source` already points at that upstream tag.
 2. `prep-obs-source.yml` — builds web assets and `fdpass-teleport`, updates
    `obs-build-source` to the same tag, updates `obs-build-inputs` to the
-   current `autobuild` commit, uploads the persistent `build-assets` release
-   plus checksums, creates an `+autobuild.N` marker release, and calls the OBS
-   trigger token.
+   current `autobuild` commit, updates `obs-build-assets` with matching assets
+   and checksums, and calls the OBS trigger token.
 3. OBS — fetches source via `_service`, vendors Go modules, builds RPM and Deb.
 
 ---

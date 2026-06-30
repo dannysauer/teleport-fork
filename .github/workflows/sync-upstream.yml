@@ -87,7 +87,9 @@ jobs:
             exit 1
           fi
 
-          if git ls-remote --tags origin "${WANT}+autobuild.*" | grep -q .; then
+          WANT_COMMIT=$(git rev-list -n 1 "$WANT")
+          OBS_SOURCE_SHA=$(git ls-remote origin refs/heads/obs-build-source | awk '{print $1}')
+          if [ "$OBS_SOURCE_SHA" = "$WANT_COMMIT" ]; then
             echo "Latest stable release already built: $WANT"
             echo "needs_build=false" >> "$GITHUB_OUTPUT"
           else
@@ -95,6 +97,7 @@ jobs:
             echo "needs_build=true" >> "$GITHUB_OUTPUT"
           fi
           echo "want_tag=$WANT" >> "$GITHUB_OUTPUT"
+          echo "want_commit=$WANT_COMMIT" >> "$GITHUB_OUTPUT"
 
       - name: Push latest stable tag
         if: steps.release.outputs.needs_build == 'true'
