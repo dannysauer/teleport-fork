@@ -81,8 +81,7 @@ After `prep-obs-source.yml` has published the build assets, OBS service runs wil
   tags, including release branches
 - Fetch `teleport.spec` and `debian.*` packaging files from the
   `obs-build-inputs` branch
-- Vendor Go modules
-- Fetch pre-built web assets, fdpass binaries, and Go toolchains from the
+- Fetch vendored Go modules, pre-built web assets, fdpass binaries, and Go toolchains from the
   `obs-build-assets` branch
 
 You can upload `_service` via the OBS web UI or the `osc` CLI:
@@ -214,7 +213,7 @@ The release pipeline is:
    `obs-build-source` to the same tag, updates `obs-build-inputs` to the
    current `autobuild` commit, updates `obs-build-assets` with matching assets
    and checksums, and calls the OBS trigger token.
-3. OBS — fetches source via `_service`, vendors Go modules, builds RPM and Deb.
+3. OBS — fetches source and vendored build assets via `_service`, then builds RPM and Deb.
 
 ---
 

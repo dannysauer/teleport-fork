@@ -32,7 +32,7 @@ Source2:        teleport-fdpass-vendor.tar.gz
 # Manifest and checksums for stable build assets downloaded by _service
 Source3:        teleport-build-assets.env
 Source4:        teleport-build-assets.sha256
-# Vendored Go module dependencies from obs-service-go_modules
+# Vendored Go module dependencies from prep-obs-source.yml
 Source5:        vendor.tar.gz
 
 BuildRequires:  go >= 1.25
@@ -84,7 +84,7 @@ tar xzf %{SOURCE1}
 # Extract pre-vendored Rust dependencies for fdpass-teleport.
 tar xzf %{SOURCE2}
 
-# Extract vendored Go module dependencies from obs-service-go_modules.
+# Extract vendored Go module dependencies from prep-obs-source.yml.
 tar xzf %{SOURCE5}
 
 # Apply patches from the obs-build-inputs branch patches/ directory.
