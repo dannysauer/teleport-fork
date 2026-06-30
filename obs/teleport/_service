@@ -30,6 +30,22 @@
   </service>
 
   <!--
+    Build Debian source artifacts from the same source branch. obs-build-source
+    includes a generated debian/ directory, so gbp_scm can emit a .dsc and
+    matching source archives for Debian-family repositories.
+  -->
+  <service name="gbp_scm">
+    <param name="url">https://github.com/dannysauer/teleport-fork</param>
+    <param name="scm">git</param>
+    <param name="revision">obs-build-source</param>
+    <param name="versionformat">@PARENT_TAG@</param>
+    <param name="match-tag">v*</param>
+    <param name="versionrewrite-pattern">v([0-9]+\.[0-9]+\.[0-9]+).*</param>
+    <param name="versionrewrite-replacement">\1-0</param>
+    <param name="gbp-build-args">--git-upstream-tree=HEAD -nc -uc -us -S</param>
+  </service>
+
+  <!--
     Fetch the RPM spec from the obs-build-inputs branch and extract it into
     the OBS package source directory. Debian control files must be committed as
     real package sources because OBS selects the build description before
