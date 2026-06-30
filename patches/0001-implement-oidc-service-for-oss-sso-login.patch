@@ -46,7 +46,7 @@ index 58872c11ce..637c670d1b 100644
  		return nil, trace.Wrap(err)
 @@ -4534,13 +4513,6 @@ func (a *ServerWithRoles) ListOIDCConnectors(ctx context.Context, limit int, sta
  }
- 
+
  func (a *ServerWithRoles) CreateOIDCAuthRequest(ctx context.Context, req types.OIDCAuthRequest) (*types.OIDCAuthRequest, error) {
 -	if !modules.GetModules().Features().GetEntitlement(entitlements.OIDC).Enabled {
 -		// TODO(zmb3): ideally we would wrap ErrRequiresEnterprise here, but
@@ -65,10 +65,10 @@ index 00557fddd5..0bb6e0d031 100644
 @@ -37,7 +37,7 @@ type OIDCService interface {
  	ValidateOIDCAuthCallback(ctx context.Context, q url.Values) (*authclient.OIDCAuthResponse, error)
  }
- 
+
 -var errOIDCNotImplemented = &trace.AccessDeniedError{Message: "OIDC is only available in enterprise subscriptions"}
 +var errOIDCNotImplemented = &trace.AccessDeniedError{Message: "OIDC authentication service is not initialized"}
- 
+
  // UpsertOIDCConnector creates or updates an OIDC connector.
  func (a *Server) UpsertOIDCConnector(ctx context.Context, connector types.OIDCConnector) (types.OIDCConnector, error) {
 diff --git a/lib/auth/oidc_service.go b/lib/auth/oidc_service.go
@@ -889,7 +889,7 @@ index 57483000cf..f1b52c0a7f 100644
 +++ b/lib/auth/sso_mfa.go
 @@ -132,6 +132,10 @@ func (a *Server) verifySSOMFASession(ctx context.Context, username, sessionID, t
  	}
- 
+
  	// Verify the token matches.
 +	if mfaSess.Token == "" || token == "" {
 +		return nil, trace.AccessDenied("invalid SSO MFA challenge response")
@@ -905,7 +905,7 @@ index 9452e055dd..0531ee3900 100644
 @@ -2543,6 +2543,8 @@ func (process *TeleportProcess) initAuthService() error {
  	}
  	authServer.SetLockWatcher(lockWatcher)
- 
+
 +	authServer.SetOIDCService(auth.NewOSSOIDCService(authServer))
 +
  	if externalAuditStorage.IsUsed() {
@@ -918,7 +918,7 @@ index 0d447cd0e1..8bdf7e5160 100644
 @@ -981,6 +981,11 @@ func (h *Handler) bindDefaultEndpoints() {
  	h.GET("/webapi/github/callback", h.WithMetaRedirect(h.githubCallback))
  	h.POST("/webapi/github/login/console", h.WithLimiter(h.githubLoginConsole))
- 
+
 +	// OIDC connector handlers
 +	h.GET("/webapi/oidc/login/web", h.WithRedirect(h.oidcLoginWeb))
 +	h.GET("/webapi/oidc/callback", h.WithMetaRedirect(h.oidcCallback))
@@ -930,7 +930,7 @@ index 0d447cd0e1..8bdf7e5160 100644
 @@ -2517,6 +2522,157 @@ func (h *Handler) githubCallback(w http.ResponseWriter, r *http.Request, p httpr
  	return redirectURL.String()
  }
- 
+
 +func (h *Handler) oidcLoginWeb(w http.ResponseWriter, r *http.Request, p httprouter.Params) string {
 +	logger := h.logger.With("auth", "oidc")
 +	logger.DebugContext(r.Context(), "Web login start")
