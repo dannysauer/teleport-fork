@@ -95,9 +95,9 @@ jobs:
         run: |
           go mod vendor
           mkdir -p webassets/e/teleport
-          touch webassets/e/teleport/.obs-vendor-placeholder
+          touch webassets/e/teleport/placeholder.txt
           go -C build.assets/tooling mod vendor
-          rm -f webassets/e/teleport/.obs-vendor-placeholder
+          rm -f webassets/e/teleport/placeholder.txt
           tar czf vendor.tar.gz vendor/ build.assets/tooling/vendor/
 
       - name: Upload Go vendor artifact
