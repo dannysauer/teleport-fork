@@ -111,9 +111,12 @@ jobs:
         if: steps.release.outputs.needs_build == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
           TAG: ${{ steps.release.outputs.want_tag }}
         run: |
-          gh workflow run prep-obs-source.yml --ref autobuild -f tag="$TAG"
+          # The checkout is a mirror of upstream Teleport, so make the target
+          # repo explicit instead of letting gh infer one from git remotes.
+          gh workflow run prep-obs-source.yml --repo "$REPO" --ref autobuild -f tag="$TAG"
 
       - name: Summary
         run: |

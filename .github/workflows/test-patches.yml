@@ -20,15 +20,34 @@ jobs:
         with:
           path: autobuild
 
-      - name: Checkout upstream master
+      - name: Checkout upstream source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: master
+          fetch-depth: 0
           path: upstream
+
+      - name: Checkout latest stable tag
+        id: stable
+        working-directory: upstream
+        run: |
+          TAG=$(
+            git tag -l 'v*' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | sort -V \
+              | tail -1
+          )
+          if [ -z "$TAG" ]; then
+            echo "Could not determine latest stable tag" >&2
+            exit 1
+          fi
+          git checkout "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Apply patches
         working-directory: upstream
         run: |
+          echo "Applying patches to ${{ steps.stable.outputs.tag }}"
           for patch in ../autobuild/patches/*.patch; do
             [ -f "$patch" ] || continue
             name="$(basename "$patch")"
