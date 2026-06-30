@@ -94,9 +94,11 @@ jobs:
       - name: Vendor Go modules
         run: |
           go mod vendor
-          mkdir -p webassets/e/teleport
+          mkdir -p webassets/teleport webassets/e/teleport
+          touch webassets/teleport/placeholder.txt
           touch webassets/e/teleport/placeholder.txt
           go -C build.assets/tooling mod vendor
+          rm -f webassets/teleport/placeholder.txt
           rm -f webassets/e/teleport/placeholder.txt
           tar czf vendor.tar.gz vendor/ build.assets/tooling/vendor/
 
