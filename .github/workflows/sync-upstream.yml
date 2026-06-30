@@ -15,7 +15,8 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     outputs:
-      new_tags: ${{ steps.push-tag.outputs.new_tags }}
+      latest_tag: ${{ steps.release.outputs.want_tag }}
+      needs_build: ${{ steps.release.outputs.needs_build }}
 
     steps:
       # The built-in GITHUB_TOKEN can never push changes under .github/workflows/,
@@ -68,39 +69,49 @@ jobs:
           # Patches (if any) live in patches/ on this branch and are applied at build time.
           git push origin upstream/master:refs/heads/master --force
 
-      - name: Push latest release tag
-        id: push-tag
+      - name: Detect latest upstream stable release
+        id: release
         run: |
-          # Build only the latest stable upstream release tag. The upstream repo
-          # has many historical and pre-release tags; pushing all missing tags
-          # on first setup would fan out into a large OBS build storm.
-          LATEST_UPSTREAM_TAG=$(
-            git tag --merged upstream/master \
+          # Stable Teleport releases are tagged on upstream release branches,
+          # not necessarily on master, so scan all fetched upstream tags. Limit
+          # to clean vX.Y.Z tags to avoid prereleases and component/path tags.
+          WANT=$(
+            git tag -l 'v*' \
               | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
               | sort -V \
               | tail -1
           )
-          ORIGIN_TAGS=$(git ls-remote --tags origin | awk '{print $2}' | sed 's|refs/tags/||' | sed 's|\^{}||' | sort -V | uniq)
 
-          if [ -z "$LATEST_UPSTREAM_TAG" ]; then
+          if [ -z "$WANT" ]; then
             echo "Could not determine latest upstream release tag" >&2
             exit 1
           fi
 
-          if ! echo "$ORIGIN_TAGS" | grep -qx "$LATEST_UPSTREAM_TAG"; then
-            echo "Pushing new tag: $LATEST_UPSTREAM_TAG"
-            git push origin "refs/tags/$LATEST_UPSTREAM_TAG"
-            echo "new_tags=$LATEST_UPSTREAM_TAG" >> "$GITHUB_OUTPUT"
+          if git ls-remote --tags origin "${WANT}+autobuild.*" | grep -q .; then
+            echo "Latest stable release already built: $WANT"
+            echo "needs_build=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Latest release tag already exists in origin: $LATEST_UPSTREAM_TAG"
-            echo "new_tags=" >> "$GITHUB_OUTPUT"
+            echo "Latest stable release needs build: $WANT"
+            echo "needs_build=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "want_tag=$WANT" >> "$GITHUB_OUTPUT"
+
+      - name: Push latest stable tag
+        if: steps.release.outputs.needs_build == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.want_tag }}
+        run: |
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "Tag already exists in origin: $TAG"
+          else
+            git push origin "refs/tags/$TAG"
           fi
 
       - name: Dispatch OBS source preparation
-        if: steps.push-tag.outputs.new_tags != ''
+        if: steps.release.outputs.needs_build == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          TAG: ${{ steps.push-tag.outputs.new_tags }}
+          TAG: ${{ steps.release.outputs.want_tag }}
         run: |
           gh workflow run prep-obs-source.yml --ref autobuild -f tag="$TAG"
 
@@ -108,7 +119,8 @@ jobs:
         run: |
           echo "### Sync result" >> "$GITHUB_STEP_SUMMARY"
           echo "- master updated: ${{ steps.check.outputs.needs_update }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Latest new tag: ${{ steps.push-tag.outputs.new_tags || 'none' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Latest upstream stable: ${{ steps.release.outputs.want_tag || 'none' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Build dispatched: ${{ steps.release.outputs.needs_build }}" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Disable upstream workflows that don't belong on this fork ───────────────
   # master is a pristine mirror of gravitational/teleport, so it carries

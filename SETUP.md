@@ -76,7 +76,9 @@ In your OBS project, create a new package named **`gravitational_teleport`** and
 **only `obs/teleport/_service`**.  That is the only file OBS needs from you.
 
 After `prep-obs-source.yml` has published the build assets, OBS service runs will:
-- Fetch the Teleport source tarball from the `obs-build-source` branch
+- Fetch the Teleport source tarball from the `obs-build-source` branch, which
+  points at the newest upstream stable `vX.Y.Z` tag selected from all upstream
+  tags, including release branches
 - Fetch `teleport.spec` and `debian.*` packaging files from the
   `obs-build-inputs` branch
 - Vendor Go modules
@@ -193,23 +195,28 @@ to `ghcr.io`.
 
 ## 9. Trigger the first build
 
-Use **Actions → Run workflow** on `sync-upstream.yml` to pull upstream and push
-the latest stable upstream tag if it is not already present in your fork. That
-workflow explicitly dispatches `prep-obs-source.yml` from `autobuild` for the
-new tag. If the tag already exists, run `prep-obs-source.yml` manually for the
-tag you want to build.
+Use **Actions → Run workflow** on `sync-upstream.yml` to pull upstream, find the
+newest stable upstream tag, and dispatch `prep-obs-source.yml` from `autobuild`
+if that release has not already been prepared. Stable Teleport releases are
+tagged on upstream release branches, so the workflow scans all upstream tags for
+clean `vX.Y.Z` releases instead of using tags merged into `master`.
+
+If you need to rebuild a tag that already has an `+autobuild.N` marker release,
+run `prep-obs-source.yml` manually for the tag you want to build.
 
 Pushing `autobuild` by itself only re-runs OBS services if you installed
 `.obs/workflows.yml`; it does not build or upload GitHub release assets.
 
 The release pipeline is:
 
-1. `sync-upstream.yml` — syncs `master`, pushes the latest stable upstream tag
-   when missing, and dispatches `prep-obs-source.yml` for that tag.
+1. `sync-upstream.yml` — syncs `master`, finds the latest upstream stable tag,
+   pushes it to this fork if missing, and dispatches `prep-obs-source.yml` unless
+   an `+autobuild.N` marker release already exists for that upstream tag.
 2. `prep-obs-source.yml` — builds web assets and `fdpass-teleport`, updates
    `obs-build-source` to the same tag, updates `obs-build-inputs` to the
    current `autobuild` commit, uploads the persistent `build-assets` release
-   plus checksums, and calls the OBS trigger token.
+   plus checksums, creates an `+autobuild.N` marker release, and calls the OBS
+   trigger token.
 3. OBS — fetches source via `_service`, vendors Go modules, builds RPM and Deb.
 
 ---

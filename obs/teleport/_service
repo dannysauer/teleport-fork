@@ -3,9 +3,11 @@
 <services>
   <!--
     Fetch Teleport source from the fork's obs-build-source branch.
-    prep-obs-source.yml force-updates that branch to the exact upstream tag
-    that produced the build-assets release, so the source and prebuilt assets
-    stay tied to the same release identity.
+    prep-obs-source.yml force-updates that branch to the exact upstream stable
+    tag that produced the build-assets release, so the source and prebuilt
+    assets stay tied to the same release identity. Stable Teleport releases are
+    tagged on upstream release branches, not necessarily on master; the sync
+    workflow detects the newest clean vX.Y.Z tag across all upstream tags.
 
     This service is triggered by prep-obs-source.yml (via OBS trigger token)
     after it has updated obs-build-source and uploaded fresh build assets.
@@ -18,7 +20,8 @@
     <param name="submodules">disable</param>
     <param name="versionformat">@PARENT_TAG@</param>
     <param name="match-tag">v*</param>
-    <param name="versionrewrite-pattern">v(.*)</param>
+    <param name="versionrewrite-pattern">v([0-9]+\.[0-9]+\.[0-9]+).*</param>
+    <param name="versionrewrite-replacement">\1</param>
     <param name="exclude">.git</param>
     <param name="exclude">e</param>
     <param name="exclude">e2e</param>
