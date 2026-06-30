@@ -94,7 +94,8 @@ jobs:
       - name: Vendor Go modules
         run: |
           go mod vendor
-          tar czf vendor.tar.gz vendor/
+          go -C build.assets/tooling mod vendor
+          tar czf vendor.tar.gz vendor/ build.assets/tooling/vendor/
 
       - name: Upload Go vendor artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
