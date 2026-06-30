@@ -36,7 +36,7 @@
     The spec and debian.* files are pinned to the same autobuild commit that
     produced the downloaded build assets.
   -->
-  <service name="obs_scm">
+  <service name="obs_scm" mode="trylocal">
     <param name="url">https://github.com/dannysauer/teleport-fork</param>
     <param name="scm">git</param>
     <param name="revision">obs-build-inputs</param>
@@ -66,7 +66,7 @@
   -->
 
   <!-- Update spec Version: and debian changelog from the extracted git tag. -->
-  <service name="set_version">
+  <service name="set_version" mode="trylocal">
     <param name="basename">teleport</param>
   </service>
 
