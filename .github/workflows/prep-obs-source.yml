@@ -303,6 +303,8 @@ jobs:
           cp "$TMP/obs/teleport/debian.rules" debian/rules
           cp "$TMP/obs/teleport/debian.copyright" debian/copyright
           cp "$TMP/obs/teleport/debian.changelog" debian/changelog
+          mkdir -p debian/source
+          printf '3.0 (quilt)\n' > debian/source/format
           chmod 755 debian/rules
           sed -i -E "1s/^teleport \\([^)]+\\)/teleport (${VERSION}-0)/" debian/changelog
           sed -i -E "s/upstream v[0-9A-Za-z.+-]+/upstream ${TAG}/" debian/changelog
@@ -319,6 +321,22 @@ jobs:
           echo "OBS source branch now points at $TAG"
           echo "OBS input branch now points at $AUTOBUILD_SHA"
 
+      - name: Build Debian source artifacts
+        env:
+          VERSION: ${{ needs.build-webassets.outputs.version }}
+        run: |
+          UPSTREAM_VERSION=$(dpkg-parsechangelog -l teleport-src/debian/changelog -S Version | sed 's/-[^-]*$//')
+          if [ "$UPSTREAM_VERSION" != "$VERSION" ]; then
+            echo "Debian changelog version $UPSTREAM_VERSION does not match source version $VERSION" >&2
+            exit 1
+          fi
+          git -C teleport-src archive \
+            --format=tar \
+            --prefix="teleport-${VERSION}/" \
+            HEAD -- . ':(exclude)debian' \
+            | gzip -n > "teleport_${VERSION}.orig.tar.gz"
+          dpkg-source -b teleport-src
+
       - name: Stage assets with fixed names
         # OBS _service uses stable URLs that never change between versions.
         # We update a persistent "build-assets" release in-place each run.
@@ -332,6 +350,9 @@ jobs:
           cp artifacts/go-vendor/vendor.tar.gz                     vendor.tar.gz
           cp artifacts/fdpass-amd64/fdpass-teleport-linux-amd64    fdpass-teleport-linux-amd64
           cp artifacts/fdpass-arm64/fdpass-teleport-linux-arm64    fdpass-teleport-linux-arm64
+          test -s teleport_${VERSION}.orig.tar.gz
+          test -s teleport_${VERSION}-0.debian.tar.xz
+          test -s teleport_${VERSION}-0.dsc
 
           GOLANG_VERSION=$(awk '$1 == "GOLANG_VERSION" && $2 == "?=" { print $3; exit }' teleport-src/build.assets/versions.mk)
           if [ -z "$GOLANG_VERSION" ]; then
@@ -390,12 +411,16 @@ jobs:
             teleport-go-linux-amd64.tar.gz \
             teleport-go-linux-arm64.tar.gz \
             teleport-go-version.txt \
+            teleport_${VERSION}.orig.tar.gz \
+            teleport_${VERSION}-0.debian.tar.xz \
+            teleport_${VERSION}-0.dsc \
             > teleport-build-assets.sha256
 
       - name: Update OBS assets branch
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ needs.build-webassets.outputs.tag }}
+          VERSION: ${{ needs.build-webassets.outputs.version }}
         run: |
           mkdir obs-assets
           cp \
@@ -407,6 +432,9 @@ jobs:
             teleport-go-linux-amd64.tar.gz \
             teleport-go-linux-arm64.tar.gz \
             teleport-go-version.txt \
+            teleport_${VERSION}.orig.tar.gz \
+            teleport_${VERSION}-0.debian.tar.xz \
+            teleport_${VERSION}-0.dsc \
             teleport-build-assets.env \
             teleport-build-assets.sha256 \
             obs-assets/

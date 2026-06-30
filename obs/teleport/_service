@@ -88,5 +88,8 @@
     <param name="extract">teleport-go-linux-amd64.tar.gz</param>
     <param name="extract">teleport-go-linux-arm64.tar.gz</param>
     <param name="extract">teleport-go-version.txt</param>
+    <param name="extract">teleport_*.orig.tar.gz</param>
+    <param name="extract">teleport_*.debian.tar.xz</param>
+    <param name="extract">teleport_*.dsc</param>
   </service>
 </services>
