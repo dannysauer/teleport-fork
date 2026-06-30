@@ -351,25 +351,26 @@ jobs:
             teleport-go-version.txt \
             > teleport-build-assets.sha256
 
-      - name: Create or update build-assets release
+      - name: Replace build-assets release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.build-webassets.outputs.tag }}
         run: |
-          # Create the release once (fails silently on subsequent runs).
-          # --target autobuild pins the git tag to this branch so it never moves.
-          gh release create build-assets \
+          # This repository has immutable releases enabled, so assets must be
+          # attached during release creation. Recreate the persistent
+          # build-assets tag each run; OBS download URLs stay stable.
+          gh release delete build-assets \
             --repo "${{ github.repository }}" \
-            --title "Build assets" \
-            --notes "Internal: build assets consumed by OBS. Not a user-installable release." \
-            --prerelease \
-            --target autobuild \
+            --cleanup-tag \
+            --yes \
             2>/dev/null || true
 
-          # Overwrite assets in-place — the URLs stay constant across versions.
-          gh release upload build-assets \
+          gh release create build-assets \
             --repo "${{ github.repository }}" \
-            --clobber \
+            --title "Build assets - $TAG" \
+            --notes "Internal: build assets consumed by OBS. Currently tracking: **$TAG**." \
+            --prerelease \
+            --target autobuild \
             teleport-webassets.tar.gz \
             teleport-fdpass-vendor.tar.gz \
             fdpass-teleport-linux-amd64 \
@@ -379,12 +380,6 @@ jobs:
             teleport-go-version.txt \
             teleport-build-assets.env \
             teleport-build-assets.sha256
-
-          # Update the title so it's obvious which version the assets track.
-          gh release edit build-assets \
-            --repo "${{ github.repository }}" \
-            --title "Build assets — $TAG" \
-            --notes "Internal: build assets consumed by OBS. Currently tracking: **$TAG**."
 
       - name: Mark completed source preparation
         env:
