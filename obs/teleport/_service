@@ -30,6 +30,12 @@
     <param name="filename">teleport</param>
   </service>
 
+  <!-- tar_scm emits .tar; packaging expects teleport-$version.tar.gz. -->
+  <service name="recompress">
+    <param name="file">teleport*.tar</param>
+    <param name="compression">gz</param>
+  </service>
+
   <!--
     Fetch packaging files from the obs-build-inputs branch and extract them
     directly into the OBS package source directory.  This means only
