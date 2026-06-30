@@ -291,10 +291,25 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ needs.build-webassets.outputs.tag }}
+          VERSION: ${{ needs.build-webassets.outputs.version }}
           AUTOBUILD_SHA: ${{ needs.build-webassets.outputs.autobuild_sha }}
         run: |
           cd teleport-src
           git fetch --depth=1 origin "$AUTOBUILD_SHA"
+          TMP=$(mktemp -d)
+          git archive "$AUTOBUILD_SHA" obs/teleport | tar -x -C "$TMP"
+          mkdir -p debian
+          cp "$TMP/obs/teleport/debian.control" debian/control
+          cp "$TMP/obs/teleport/debian.rules" debian/rules
+          cp "$TMP/obs/teleport/debian.copyright" debian/copyright
+          cp "$TMP/obs/teleport/debian.changelog" debian/changelog
+          chmod 755 debian/rules
+          sed -i -E "1s/^teleport \\([^)]+\\)/teleport (${VERSION}-0)/" debian/changelog
+          sed -i -E "s/upstream v[0-9A-Za-z.+-]+/upstream ${TAG}/" debian/changelog
+          git config user.name "teleport-fork automation"
+          git config user.email "noreply@github.com"
+          git add debian
+          git commit -m "Add OBS Debian packaging for ${TAG}"
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
             "HEAD:refs/heads/obs-build-source" \
             --force
