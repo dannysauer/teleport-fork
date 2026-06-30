@@ -4,7 +4,7 @@
   <!--
     Fetch KIWI config files from the autobuild branch and extract them
     directly into the OBS package source directory.  Only _service itself
-    needs to be uploaded to OBS — config.xml and config.sh come from Git.
+    needs to be uploaded to OBS — teleport.kiwi and config.sh come from Git.
   -->
   <service name="obs_scm">
     <param name="url">https://github.com/dannysauer/teleport-fork</param>
@@ -12,17 +12,8 @@
     <param name="revision">autobuild</param>
     <param name="subdir">obs/teleport-container</param>
     <param name="filename">container-config</param>
-    <param name="extract">config.xml</param>
+    <param name="extract">teleport.kiwi</param>
     <param name="extract">config.sh</param>
   </service>
 
-  <!--
-    Keep the KIWI image version in sync with the teleport package version.
-    Rebuilds the container when the teleport package in the project is updated.
-  -->
-  <service name="set_version">
-    <param name="basename">teleport</param>
-    <param name="fromfile">config.xml</param>
-    <param name="regex">&lt;version&gt;([^&lt;]+)&lt;/version&gt;</param>
-  </service>
 </services>
