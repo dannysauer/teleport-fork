@@ -13,7 +13,7 @@
     after it has updated obs-build-source and uploaded fresh build assets.
     No manual _service edits are needed between versions.
   -->
-  <service name="obs_scm">
+  <service name="tar_scm">
     <param name="url">https://github.com/dannysauer/teleport-fork</param>
     <param name="scm">git</param>
     <param name="revision">obs-build-source</param>
@@ -29,8 +29,6 @@
     <param name="exclude">docs</param>
     <param name="filename">teleport</param>
   </service>
-
-  <service name="tar"/>
 
   <!--
     Fetch packaging files from the obs-build-inputs branch and extract them
@@ -63,18 +61,10 @@
   </service>
 
   <!--
-    Vendor all Go module dependencies.
-    Runs during the OBS service phase (which has network access).
-    Result is a vendor/ directory added to the source tarball.
+    Go module dependencies are vendored by prep-obs-source.yml and fetched
+    from obs-build-assets below. Keeping this out of OBS avoids depending on
+    OBS-side service chaining to unpack and re-pack the source archive.
   -->
-  <service name="recompress">
-    <param name="file">teleport*.tar</param>
-    <param name="compression">gz</param>
-  </service>
-
-  <service name="go_modules">
-    <param name="archive">teleport*.tar.gz</param>
-  </service>
 
   <!-- Update spec Version: and debian changelog from the extracted git tag. -->
   <service name="set_version">
@@ -95,6 +85,7 @@
     <param name="extract">teleport-build-assets.env</param>
     <param name="extract">teleport-build-assets.sha256</param>
     <param name="extract">teleport-fdpass-vendor.tar.gz</param>
+    <param name="extract">vendor.tar.gz</param>
     <param name="extract">fdpass-teleport-linux-amd64</param>
     <param name="extract">fdpass-teleport-linux-arm64</param>
     <param name="extract">teleport-go-linux-amd64.tar.gz</param>

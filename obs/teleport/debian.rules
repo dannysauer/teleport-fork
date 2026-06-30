@@ -53,7 +53,7 @@ override_dh_auto_configure:
 	mkdir -p $(GOROOT)
 	tar xzf ../$(GO_TARBALL) -C $(GOROOT) --strip-components=1
 
-	# Extract vendored Go module dependencies from obs-service-go_modules.
+	# Extract vendored Go module dependencies from prep-obs-source.yml.
 	tar xzf $(VENDOR_TARBALL)
 
 override_dh_auto_build:
