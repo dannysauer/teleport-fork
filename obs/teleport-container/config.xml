@@ -51,11 +51,11 @@
       </containerconfig>
     </type>
     <!--
-      Container publishing is scaffolded but not wired into the active RPM/Deb
-      release flow. Update this version manually if you enable the optional
-      teleport-container OBS package.
+      Keep this version aligned with the teleport RPM package published by the
+      gravitational_teleport OBS package. sync-registry.yml reads the resulting
+      OCI version label before mirroring the image to ghcr.io.
     -->
-    <version>19.0.0</version>
+    <version>18.9.2</version>
     <packagemanager>zypper</packagemanager>
   </preferences>
 
@@ -87,8 +87,7 @@
   <!-- Runtime: packages installed in the final image -->
   <packages type="image">
     <package name="teleport"/>
-    <package name="ca-certificates-mozilla"/>
-    <package name="libpam0"/>
+    <package name="pam"/>
     <package name="libpcsclite1"/>   <!-- PIV / smart card support -->
     <package name="curl"/>            <!-- health checks, webhook calls -->
     <package name="tzdata"/>
