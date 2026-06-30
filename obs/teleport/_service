@@ -13,7 +13,7 @@
     after it has updated obs-build-source and uploaded fresh build assets.
     No manual _service edits are needed between versions.
   -->
-  <service name="tar_scm">
+  <service name="obs_scm">
     <param name="url">https://github.com/dannysauer/teleport-fork</param>
     <param name="scm">git</param>
     <param name="revision">obs-build-source</param>
@@ -65,6 +65,11 @@
     Runs during the OBS service phase (which has network access).
     Result is a vendor/ directory added to the source tarball.
   -->
+  <service name="recompress">
+    <param name="file">teleport*.tar</param>
+    <param name="compression">gz</param>
+  </service>
+
   <service name="go_modules">
     <param name="archive">teleport*.tar.gz</param>
   </service>
