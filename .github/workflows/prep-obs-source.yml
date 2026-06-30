@@ -333,8 +333,13 @@ jobs:
           git -C teleport-src archive \
             --format=tar \
             --prefix="teleport-${VERSION}/" \
-            HEAD -- . ':(exclude)debian' \
+            HEAD -- . \
+            ':(exclude)debian' \
+            ':(exclude)docs' \
+            ':(exclude)e2e' \
+            ':(exclude)rfd' \
             | gzip -n > "teleport_${VERSION}.orig.tar.gz"
+          rm -rf teleport-src/docs teleport-src/e2e teleport-src/rfd
           dpkg-source -b teleport-src
 
       - name: Stage assets with fixed names
@@ -351,6 +356,10 @@ jobs:
           cp artifacts/fdpass-amd64/fdpass-teleport-linux-amd64    fdpass-teleport-linux-amd64
           cp artifacts/fdpass-arm64/fdpass-teleport-linux-arm64    fdpass-teleport-linux-arm64
           test -s teleport_${VERSION}.orig.tar.gz
+          if [ "$(stat -c %s teleport_${VERSION}.orig.tar.gz)" -ge 100000000 ]; then
+            echo "Debian orig tarball is too large for the obs-build-assets branch" >&2
+            exit 1
+          fi
           test -s teleport_${VERSION}-0.debian.tar.xz
           test -s teleport_${VERSION}-0.dsc
 
