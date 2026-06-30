@@ -24,6 +24,7 @@ Release:        1%{?dist}
 Summary:        Identity-aware access proxy for infrastructure
 License:        AGPL-3.0-only
 URL:            https://github.com/gravitational/teleport
+ExclusiveArch:  x86_64 aarch64
 Source0:        teleport-%{version}.tar
 # Pre-built webassets (built with Node/pnpm in GitHub Actions)
 Source1:        teleport-webassets.tar.gz
