@@ -94,7 +94,10 @@ jobs:
       - name: Vendor Go modules
         run: |
           go mod vendor
+          mkdir -p webassets/e/teleport
+          touch webassets/e/teleport/.obs-vendor-placeholder
           go -C build.assets/tooling mod vendor
+          rm -f webassets/e/teleport/.obs-vendor-placeholder
           tar czf vendor.tar.gz vendor/ build.assets/tooling/vendor/
 
       - name: Upload Go vendor artifact
