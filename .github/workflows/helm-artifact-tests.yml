@@ -5,13 +5,7 @@ name: Helm artifact tests
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows:
-      - Sync OBS registry to ghcr.io
-    branches:
-      - autobuild
-    types:
-      - completed
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -29,8 +23,10 @@ env:
 jobs:
   published-artifacts:
     name: Published image and Helm charts
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.image.outputs.version }}
+      image: ${{ steps.image.outputs.image }}
     steps:
       - name: Install registry tools
         run: |
@@ -42,9 +38,9 @@ jobs:
 
       - name: Log in to ghcr.io
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | \
+          echo "${{ github.token }}" | \
             docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          echo "${{ secrets.GITHUB_TOKEN }}" | \
+          echo "${{ github.token }}" | \
             helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Inspect published image
@@ -175,3 +171,81 @@ jobs:
             -summary \
             teleport-cluster-rendered-resources.yaml \
             teleport-kube-agent-rendered-resources.yaml
+
+  kind-install:
+    name: Kind install smoke
+    needs: published-artifacts
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.published-artifacts.outputs.version }}
+      IMAGE: ${{ needs.published-artifacts.outputs.image }}
+      NAMESPACE: teleport-e2e
+      RELEASE: teleport-test
+    steps:
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.14.0
+        with:
+          cluster_name: teleport-chart
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Log in to ghcr.io
+        run: |
+          echo "${{ github.token }}" | \
+            docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ github.token }}" | \
+            helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Load published image into kind
+        run: |
+          docker pull "${IMAGE}"
+          kind load docker-image "${IMAGE}" --name teleport-chart
+
+      - name: Install Teleport cluster chart
+        run: |
+          helm install "${RELEASE}" \
+            "oci://ghcr.io/${GHCR_OWNER}/charts/teleport-cluster" \
+            --version "${VERSION}" \
+            --namespace "${NAMESPACE}" \
+            --create-namespace \
+            --wait \
+            --timeout 8m \
+            --set clusterName=teleport.localhost \
+            --set kubeClusterName=kind-e2e \
+            --set proxyListenerMode=multiplex \
+            --set service.type=ClusterIP \
+            --set persistence.enabled=false \
+            --set podSecurityPolicy.enabled=false
+
+      - name: Verify rollouts
+        run: |
+          kubectl get all -n "${NAMESPACE}"
+          kubectl rollout status "deployment/${RELEASE}-auth" -n "${NAMESPACE}" --timeout=180s
+          kubectl rollout status "deployment/${RELEASE}-proxy" -n "${NAMESPACE}" --timeout=180s
+
+      - name: Verify proxy ping endpoint
+        run: |
+          kubectl port-forward "svc/${RELEASE}" 3080:443 -n "${NAMESPACE}" \
+            >/tmp/teleport-port-forward.log 2>&1 &
+          PORT_FORWARD_PID=$!
+          trap 'kill ${PORT_FORWARD_PID}' EXIT
+
+          for _ in $(seq 1 60); do
+            if curl -ksSf https://127.0.0.1:3080/webapi/ping >/tmp/teleport-ping.json; then
+              cat /tmp/teleport-ping.json
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Teleport proxy ping endpoint did not become ready" >&2
+          cat /tmp/teleport-port-forward.log >&2
+          exit 1
+
+      - name: Show diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get all -n "${NAMESPACE}" || true
+          kubectl describe pods -n "${NAMESPACE}" || true
+          kubectl logs -n "${NAMESPACE}" -l "app.kubernetes.io/instance=${RELEASE}" --all-containers --tail=200 || true

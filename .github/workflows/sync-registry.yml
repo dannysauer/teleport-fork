@@ -26,6 +26,8 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    outputs:
+      synced: ${{ steps.decision.outputs.sync }}
 
     steps:
       - name: Install skopeo
@@ -215,3 +217,12 @@ jobs:
           echo "- OBS digest: ${{ steps.obs.outputs.digest || 'unknown' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- ghcr.io digest before: ${{ steps.ghcr.outputs.digest || 'none' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Synced: ${{ steps.decision.outputs.sync }}" >> "$GITHUB_STEP_SUMMARY"
+
+  verify-published-artifacts:
+    name: Verify published artifacts
+    needs: sync
+    if: needs.sync.outputs.synced == 'true'
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/helm-artifact-tests.yml
