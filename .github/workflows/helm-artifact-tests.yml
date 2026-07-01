@@ -1,0 +1,145 @@
+# Copyright 2025 Danny Sauer and contributors
+# SPDX-License-Identifier: Apache-2.0
+
+name: Helm artifact tests
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Sync OBS registry to ghcr.io
+    branches:
+      - autobuild
+    types:
+      - completed
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  GHCR_OWNER: ${{ github.repository_owner }}
+  IMAGE_NAME: teleport
+  KUBECONFORM_VERSION: v0.7.0
+
+jobs:
+  published-artifacts:
+    name: Published image and Helm charts
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install registry tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq skopeo
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Log in to ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Inspect published image
+        id: image
+        run: |
+          IMAGE="ghcr.io/${GHCR_OWNER}/${IMAGE_NAME}:latest"
+          INFO="$(skopeo inspect "docker://${IMAGE}")"
+          VERSION="$(jq -r '.Labels["org.opencontainers.image.version"] // empty' <<<"${INFO}")"
+
+          if [ -z "${VERSION}" ]; then
+            echo "Image is missing org.opencontainers.image.version" >&2
+            exit 1
+          fi
+          if ! printf '%s' "${VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$'; then
+            echo "Image version is not a release version: ${VERSION}" >&2
+            exit 1
+          fi
+
+          MANIFEST="$(docker manifest inspect "${IMAGE}")"
+          jq -e '
+            .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
+            and ([.manifests[].platform.architecture] | sort == ["amd64", "arm64"])
+          ' <<<"${MANIFEST}"
+
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run image smoke test
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          VERSION: ${{ steps.image.outputs.version }}
+        run: |
+          docker run --rm --entrypoint /usr/bin/teleport "${IMAGE}" version | tee /tmp/teleport-version.txt
+          grep -F "Teleport v${VERSION}" /tmp/teleport-version.txt
+
+      - name: Pull published charts
+        env:
+          VERSION: ${{ steps.image.outputs.version }}
+        run: |
+          mkdir -p chart-artifacts
+          cd chart-artifacts
+
+          for chart in \
+            teleport-cluster \
+            teleport-kube-agent \
+            tbot \
+            teleport-relay \
+            teleport-plugin-event-handler; do
+            helm pull "oci://ghcr.io/${GHCR_OWNER}/charts/${chart}" --version "${VERSION}"
+          done
+
+      - name: Render Teleport charts
+        env:
+          VERSION: ${{ steps.image.outputs.version }}
+        run: |
+          helm template teleport-test \
+            "oci://ghcr.io/${GHCR_OWNER}/charts/teleport-cluster" \
+            --version "${VERSION}" \
+            --namespace teleport-test \
+            --set clusterName=teleport-test.local \
+            --set proxyListenerMode=multiplex \
+            > teleport-cluster-rendered.yaml
+
+          helm template teleport-agent-test \
+            "oci://ghcr.io/${GHCR_OWNER}/charts/teleport-kube-agent" \
+            --version "${VERSION}" \
+            --namespace teleport-agent-test \
+            --set proxyAddr=teleport-test.local:443 \
+            --set authToken=test-token \
+            --set kubeClusterName=kind-smoke \
+            > teleport-kube-agent-rendered.yaml
+
+          grep -F "ghcr.io/${GHCR_OWNER}/${IMAGE_NAME}:${VERSION}" \
+            teleport-cluster-rendered.yaml
+          grep -F "ghcr.io/${GHCR_OWNER}/${IMAGE_NAME}:${VERSION}" \
+            teleport-kube-agent-rendered.yaml
+
+          if grep -F "public.ecr.aws/gravitational/teleport-distroless" \
+            teleport-cluster-rendered.yaml teleport-kube-agent-rendered.yaml; then
+            echo "Rendered manifests still reference upstream Teleport distroless images" >&2
+            exit 1
+          fi
+
+      - name: Install kubeconform
+        run: |
+          curl -fsSL -o kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          tar xzf kubeconform.tar.gz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Validate rendered manifests
+        run: |
+          kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -summary \
+            teleport-cluster-rendered.yaml \
+            teleport-kube-agent-rendered.yaml
