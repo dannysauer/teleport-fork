@@ -1,0 +1,18 @@
+<!-- Copyright 2025 Danny Sauer and contributors -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<services>
+  <!--
+    Fetch the container KIWI source from obs-build-inputs. prep-obs-source.yml
+    force-updates that branch with a release-specific config.kiwi whose version
+    label matches the RPM and Helm chart version being published.
+  -->
+  <service name="obs_scm">
+    <param name="url">https://github.com/dannysauer/teleport-fork</param>
+    <param name="scm">git</param>
+    <param name="revision">obs-build-inputs</param>
+    <param name="subdir">obs/teleport-container</param>
+    <param name="filename">container-packaging</param>
+    <param name="extract">config.kiwi</param>
+    <param name="extract">config.sh</param>
+  </service>
+</services>

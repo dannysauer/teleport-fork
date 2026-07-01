@@ -315,11 +315,35 @@ jobs:
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
             "HEAD:refs/heads/obs-build-source" \
             --force
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-            "$AUTOBUILD_SHA:refs/heads/obs-build-inputs" \
-            --force
           echo "OBS source branch now points at $TAG"
-          echo "OBS input branch now points at $AUTOBUILD_SHA"
+
+      - name: Update OBS input branch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ needs.build-webassets.outputs.tag }}
+          VERSION: ${{ needs.build-webassets.outputs.version }}
+          AUTOBUILD_SHA: ${{ needs.build-webassets.outputs.autobuild_sha }}
+        run: |
+          cd teleport-src
+          git worktree add --detach ../obs-inputs "$AUTOBUILD_SHA"
+
+          cd ../obs-inputs
+          scripts/render-container-kiwi-version.sh \
+            "$VERSION" \
+            obs/teleport-container/config.kiwi
+
+          git config user.name "teleport-fork automation"
+          git config user.email "noreply@github.com"
+          git add obs/teleport-container/config.kiwi
+          if git diff --cached --quiet; then
+            echo "OBS input branch already has container version $VERSION"
+          else
+            git commit -m "Set container image version for ${TAG}"
+          fi
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:refs/heads/obs-build-inputs" \
+            --force
+          echo "OBS input branch now contains container version $VERSION"
 
       - name: Build Debian source artifacts
         env:
@@ -467,8 +491,11 @@ jobs:
           # Assets are uploaded above, so timing is safe.
           # OBS _service uses obs-build-source, updated above to this tag,
           # plus obs-build-assets, updated above with matching assets.
-          OBS_PROJECT="home:dannysauer"
-          for package in gravitational_teleport; do
+          for target in \
+            "home:dannysauer gravitational_teleport" \
+            "home:dannysauer:teleport teleport-container"; do
+            OBS_PROJECT="${target% *}"
+            package="${target#* }"
             echo "Triggering OBS rebuild: $OBS_PROJECT / $package ($TAG)"
             curl -sf -X POST \
               "https://build.opensuse.org/trigger/runservice?project=${OBS_PROJECT}&package=${package}&token=${OBS_TRIGGER_TOKEN}" \

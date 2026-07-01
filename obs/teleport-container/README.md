@@ -7,6 +7,11 @@ This KIWI image is built in OBS as:
 - Repository: `container`
 - Registry image: `registry.opensuse.org/home/dannysauer/teleport/container/dannysauer/teleport:latest`
 
+The package source is service-generated from the `obs-build-inputs` branch.
+`prep-obs-source.yml` updates `obs/teleport-container/config.kiwi` on that
+branch so the OCI version label and KIWI `<version>` match the Teleport release
+being built. Do not manually edit the live OBS package between releases.
+
 The `container` repository must include these paths, in this order:
 
 ```xml
