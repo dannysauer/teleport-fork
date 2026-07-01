@@ -3,9 +3,9 @@
 
 name: Sync OBS registry to ghcr.io
 
-# Manual-only until the OBS container package is wired to the same release
-# source as the RPM/Deb package. The current OBS integration only triggers
-# gravitational_teleport for RPM/Deb builds.
+# Manual-only for now. The OBS container image is built from the published
+# gravitational_teleport RPM in home:dannysauer/openSUSE_Slowroll, then this
+# workflow mirrors the public OBS registry image to ghcr.io.
 on:
   workflow_dispatch:
 
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 env:
-  OBS_IMAGE: registry.opensuse.org/home/dannysauer/teleport-container/teleport
+  OBS_IMAGE: registry.opensuse.org/home/dannysauer/teleport/container/dannysauer/teleport
   GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/teleport
 
 jobs:

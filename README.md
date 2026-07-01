@@ -37,20 +37,23 @@ sudo apt install teleport
 
 ### Container image
 
-Container publishing is scaffolded in `obs/teleport-container/`, but it is not
-part of the active OBS trigger path yet.
+OBS builds the container in `home:dannysauer:teleport / teleport-container`
+from the RPM published by `home:dannysauer / gravitational_teleport`.
+
+```bash
+docker pull registry.opensuse.org/home/dannysauer/teleport/container/dannysauer/teleport:latest
+```
 
 ### Helm charts
 
-Helm chart publishing depends on the container image path and is disabled until
-the OBS container package is wired to the same release source as the RPM/Deb
-package.
+Helm chart publishing is handled by `.github/workflows/sync-registry.yml` when
+the OBS image is mirrored to ghcr.io.
 
 ## Branch layout
 
 | Branch | Contents |
 |--------|----------|
-| `autobuild` *(default)* | Build automation, OBS package specs, KIWI container scaffold |
+| `autobuild` *(default)* | Build automation, OBS package specs, KIWI container config |
 | `master` | Clean mirror of [gravitational/teleport](https://github.com/gravitational/teleport) upstream |
 | `obs-build-source` | Force-updated to the upstream tag currently being packaged |
 | `obs-build-inputs` | Force-updated to the `autobuild` commit whose patches and packaging match the current assets |

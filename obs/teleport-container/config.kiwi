@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Copyright 2025 Danny Sauer and contributors -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- OBS-Imagerepo: obsrepositories:/ -->
 <image schemaversion="7.5" name="teleport">
   <description type="system">
     <author>Teleport Autobuild</author>
@@ -14,40 +15,20 @@
 
   <preferences>
     <type image="docker">
-      <containerconfig name="teleport" tag="latest">
-        <entrypoint>
-          <argument name="/usr/bin/teleport"/>
-        </entrypoint>
-        <subcommand>
-          <argument name="start"/>
-          <argument name="--config=/etc/teleport/teleport.yaml"/>
-        </subcommand>
-        <expose>
-          <port number="3022" protocol="tcp"/>  <!-- SSH proxy -->
-          <port number="3023" protocol="tcp"/>  <!-- SSH client tunneling -->
-          <port number="3024" protocol="tcp"/>  <!-- SSH tunnel listener -->
-          <port number="3025" protocol="tcp"/>  <!-- Auth server -->
-          <port number="3080" protocol="tcp"/>  <!-- HTTPS / web UI -->
-        </expose>
-        <volumes>
-          <destination path="/var/lib/teleport"/>
-          <destination path="/etc/teleport"/>
-        </volumes>
+      <containerconfig name="dannysauer/teleport" tag="latest"
+                       maintainer="Teleport Autobuild &lt;noreply@github.com&gt;">
         <labels>
           <label name="org.opencontainers.image.title" value="Teleport"/>
           <label name="org.opencontainers.image.description"
                  value="Identity-aware access proxy for infrastructure"/>
+          <label name="org.opencontainers.image.version" value="18.9.2"/>
           <label name="org.opencontainers.image.url"
                  value="https://github.com/dannysauer/teleport-fork"/>
           <label name="org.opencontainers.image.source"
                  value="https://github.com/dannysauer/teleport-fork"/>
           <label name="org.opencontainers.image.licenses" value="AGPL-3.0"/>
-          <!--
-            org.opencontainers.image.version is set by OBS automatically
-            from the <version> element below, and is what sync-registry.yml
-            reads to decide whether to push a new image to ghcr.io.
-          -->
         </labels>
+        <history author="Teleport Autobuild &lt;noreply@github.com&gt;">Teleport 18.9.2 container</history>
       </containerconfig>
     </type>
     <!--
@@ -82,6 +63,7 @@
     <package name="ca-certificates"/>
     <package name="bash"/>
     <package name="coreutils"/>
+    <package name="zypper"/>
   </packages>
 
   <!-- Runtime: packages installed in the final image -->
@@ -90,7 +72,7 @@
     <package name="pam"/>
     <package name="libpcsclite1"/>   <!-- PIV / smart card support -->
     <package name="curl"/>            <!-- health checks, webhook calls -->
-    <package name="tzdata"/>
+    <package name="timezone"/>
   </packages>
 
   <!-- Remove packaging infrastructure not needed at runtime -->
