@@ -17,7 +17,9 @@
     <type image="docker">
       <containerconfig name="dannysauer/teleport" tag="latest"
                        maintainer="Teleport Autobuild &lt;noreply@github.com&gt;">
-        <entrypoint execute="/usr/bin/teleport"/>
+        <entrypoint execute="/usr/bin/teleport">
+          <argument name="start"/>
+        </entrypoint>
         <labels>
           <label name="org.opencontainers.image.title" value="Teleport"/>
           <label name="org.opencontainers.image.description"
