@@ -104,6 +104,7 @@ jobs:
             "oci://ghcr.io/${GHCR_OWNER}/charts/teleport-cluster" \
             --version "${VERSION}" \
             --namespace teleport-test \
+            --hide-notes \
             --set clusterName=teleport-test.local \
             --set proxyListenerMode=multiplex \
             > teleport-cluster-rendered.yaml
@@ -112,6 +113,7 @@ jobs:
             "oci://ghcr.io/${GHCR_OWNER}/charts/teleport-kube-agent" \
             --version "${VERSION}" \
             --namespace teleport-agent-test \
+            --hide-notes \
             --set proxyAddr=teleport-test.local:443 \
             --set authToken=test-token \
             --set kubeClusterName=kind-smoke \
