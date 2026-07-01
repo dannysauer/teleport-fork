@@ -4,10 +4,16 @@
 name: Sync OBS registry to ghcr.io
 
 # Manual-only for now. The OBS container image is built from the published
-# gravitational_teleport RPM in home:dannysauer/openSUSE_Slowroll, then this
-# workflow mirrors the public OBS registry image to ghcr.io.
+# gravitational_teleport RPMs, then this workflow mirrors the public OBS
+# registry image to ghcr.io.
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: Force a registry sync even if the version and digest match
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   packages: write   # push to ghcr.io via GITHUB_TOKEN
@@ -44,6 +50,15 @@ jobs:
             echo "version=$OBS_VERSION" >> "$GITHUB_OUTPUT"
           fi
 
+          RAW=$(skopeo inspect --raw "docker://${{ env.OBS_IMAGE }}:latest" 2>/dev/null || true)
+          if [ -n "$RAW" ]; then
+            OBS_DIGEST=$(printf '%s' "$RAW" | sha256sum | awk '{print "sha256:" $1}')
+            echo "OBS manifest digest: $OBS_DIGEST"
+            echo "digest=$OBS_DIGEST" >> "$GITHUB_OUTPUT"
+          else
+            echo "digest=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Get current ghcr.io version
         id: ghcr
         run: |
@@ -56,20 +71,43 @@ jobs:
           echo "ghcr version: ${GHCR_VERSION:-none}"
           echo "version=${GHCR_VERSION}" >> "$GITHUB_OUTPUT"
 
+          RAW=$(skopeo inspect --no-creds --raw "docker://${{ env.GHCR_IMAGE }}:latest" 2>/dev/null || true)
+          if [ -n "$RAW" ]; then
+            GHCR_DIGEST=$(printf '%s' "$RAW" | sha256sum | awk '{print "sha256:" $1}')
+            echo "ghcr manifest digest: $GHCR_DIGEST"
+            echo "digest=$GHCR_DIGEST" >> "$GITHUB_OUTPUT"
+          else
+            echo "digest=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Decide whether to sync
         id: decision
         env:
           OBS_VERSION: ${{ steps.obs.outputs.version }}
           GHCR_VERSION: ${{ steps.ghcr.outputs.version }}
+          OBS_DIGEST: ${{ steps.obs.outputs.digest }}
+          GHCR_DIGEST: ${{ steps.ghcr.outputs.digest }}
+          FORCE_SYNC: ${{ inputs.force }}
         run: |
           OBS="$OBS_VERSION"
           GHCR="$GHCR_VERSION"
+          FORCE="$FORCE_SYNC"
           if [ -z "$OBS" ]; then
             echo "No OBS version available — nothing to do"
             echo "sync=false" >> "$GITHUB_OUTPUT"
+          elif [ "$FORCE" = "true" ]; then
+            echo "Force sync requested for $OBS"
+            echo "sync=true" >> "$GITHUB_OUTPUT"
+            echo "version=$OBS" >> "$GITHUB_OUTPUT"
           elif [ "$OBS" = "$GHCR" ]; then
-            echo "ghcr.io is already at $OBS — nothing to do"
-            echo "sync=false" >> "$GITHUB_OUTPUT"
+            if [ -n "$OBS_DIGEST" ] && [ "$OBS_DIGEST" != "$GHCR_DIGEST" ]; then
+              echo "Version matches at $OBS, but manifest digest differs — syncing"
+              echo "sync=true" >> "$GITHUB_OUTPUT"
+              echo "version=$OBS" >> "$GITHUB_OUTPUT"
+            else
+              echo "ghcr.io is already at $OBS — nothing to do"
+              echo "sync=false" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "Will sync $OBS from OBS → ghcr.io (current: ${GHCR:-none})"
             echo "sync=true" >> "$GITHUB_OUTPUT"
@@ -174,4 +212,6 @@ jobs:
           echo "### Registry sync result" >> "$GITHUB_STEP_SUMMARY"
           echo "- OBS version: ${{ steps.obs.outputs.version || 'unknown' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- ghcr.io version before: ${{ steps.ghcr.outputs.version || 'none' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- OBS digest: ${{ steps.obs.outputs.digest || 'unknown' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- ghcr.io digest before: ${{ steps.ghcr.outputs.digest || 'none' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Synced: ${{ steps.decision.outputs.sync }}" >> "$GITHUB_STEP_SUMMARY"
