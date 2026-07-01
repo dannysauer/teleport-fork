@@ -65,6 +65,9 @@ jobs:
             and ([.manifests[].platform.architecture] | sort == ["amd64", "arm64"])
           ' <<<"${MANIFEST}"
 
+          CONFIG="$(skopeo inspect --config "docker://${IMAGE}")"
+          jq -e '.config.Entrypoint == ["/usr/bin/teleport", "start"]' <<<"${CONFIG}"
+
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
 
@@ -216,7 +219,9 @@ jobs:
             --set proxyListenerMode=multiplex \
             --set service.type=ClusterIP \
             --set persistence.enabled=false \
-            --set podSecurityPolicy.enabled=false
+            --set podSecurityPolicy.enabled=false \
+            --set teleport-operator.enabled=false \
+            --set teleport-operator.installCRDs=never
 
       - name: Verify rollouts
         run: |
