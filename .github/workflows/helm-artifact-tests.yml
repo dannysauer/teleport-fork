@@ -139,9 +139,39 @@ jobs:
 
       - name: Validate rendered manifests
         run: |
+          for manifest in teleport-cluster-rendered.yaml teleport-kube-agent-rendered.yaml; do
+            awk '
+              function flush() {
+                if (has_api && has_kind) {
+                  printf "%s", doc
+                }
+                doc = ""
+                has_api = 0
+                has_kind = 0
+              }
+              /^---[[:space:]]*$/ {
+                flush()
+                doc = $0 "\n"
+                next
+              }
+              {
+                doc = doc $0 "\n"
+                if ($0 ~ /^apiVersion:[[:space:]]*/) {
+                  has_api = 1
+                }
+                if ($0 ~ /^kind:[[:space:]]*/) {
+                  has_kind = 1
+                }
+              }
+              END {
+                flush()
+              }
+            ' "${manifest}" > "${manifest%.yaml}-resources.yaml"
+          done
+
           kubeconform \
             -strict \
             -ignore-missing-schemas \
             -summary \
-            teleport-cluster-rendered.yaml \
-            teleport-kube-agent-rendered.yaml
+            teleport-cluster-rendered-resources.yaml \
+            teleport-kube-agent-rendered-resources.yaml
