@@ -184,6 +184,8 @@ jobs:
       IMAGE: ${{ needs.published-artifacts.outputs.image }}
       NAMESPACE: teleport-e2e
       RELEASE: teleport-test
+      AGENT_NAMESPACE: teleport-agent-e2e
+      AGENT_RELEASE: teleport-agent-test
     steps:
       - name: Create kind cluster
         uses: helm/kind-action@v1.14.0
@@ -248,9 +250,52 @@ jobs:
           cat /tmp/teleport-port-forward.log >&2
           exit 1
 
+      - name: Create kube-agent join token
+        id: kube-token
+        run: |
+          TOKEN="$(
+            kubectl exec "deployment/${RELEASE}-auth" -n "${NAMESPACE}" -- \
+              tctl tokens add --type=kube --ttl=10m --format=text \
+              | tail -n 1 \
+              | tr -d '\r'
+          )"
+
+          if [ -z "${TOKEN}" ]; then
+            echo "Could not create kube-agent join token" >&2
+            exit 1
+          fi
+
+          echo "::add-mask::${TOKEN}"
+          echo "token=${TOKEN}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install Teleport kube-agent chart
+        env:
+          TOKEN: ${{ steps.kube-token.outputs.token }}
+        run: |
+          helm install "${AGENT_RELEASE}" \
+            "oci://ghcr.io/${GHCR_OWNER}/charts/teleport-kube-agent" \
+            --version "${VERSION}" \
+            --namespace "${AGENT_NAMESPACE}" \
+            --create-namespace \
+            --wait \
+            --timeout 5m \
+            --set proxyAddr="${RELEASE}.${NAMESPACE}.svc.cluster.local:443" \
+            --set authToken="${TOKEN}" \
+            --set kubeClusterName=kind-agent-e2e \
+            --set insecureSkipProxyTLSVerify=true \
+            --set storage.enabled=false
+
+      - name: Verify kube-agent rollout
+        run: |
+          kubectl get all -n "${AGENT_NAMESPACE}"
+          kubectl rollout status "statefulset/${AGENT_RELEASE}" -n "${AGENT_NAMESPACE}" --timeout=180s
+
       - name: Show diagnostics on failure
         if: failure()
         run: |
           kubectl get all -n "${NAMESPACE}" || true
+          kubectl get all -n "${AGENT_NAMESPACE}" || true
           kubectl describe pods -n "${NAMESPACE}" || true
+          kubectl describe pods -n "${AGENT_NAMESPACE}" || true
           kubectl logs -n "${NAMESPACE}" -l "app.kubernetes.io/instance=${RELEASE}" --all-containers --tail=200 || true
+          kubectl logs -n "${AGENT_NAMESPACE}" -l "app.kubernetes.io/instance=${AGENT_RELEASE}" --all-containers --tail=200 || true

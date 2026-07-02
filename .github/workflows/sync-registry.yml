@@ -3,10 +3,11 @@
 
 name: Sync OBS registry to ghcr.io
 
-# Manual-only for now. The OBS container image is built from the published
-# gravitational_teleport RPMs, then this workflow mirrors the public OBS
-# registry image to ghcr.io.
+# The OBS container image is built from the published gravitational_teleport
+# RPMs, then this workflow mirrors the public OBS registry image to ghcr.io.
 on:
+  schedule:
+    - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       force:
@@ -14,10 +15,22 @@ on:
         required: false
         default: false
         type: boolean
+      expected_version:
+        description: Optional version to wait for in the OBS registry
+        required: false
+      wait_for_obs:
+        description: Wait for OBS to publish expected_version before deciding
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   packages: write   # push to ghcr.io via GITHUB_TOKEN
   contents: read
+
+concurrency:
+  group: sync-registry-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   OBS_IMAGE: registry.opensuse.org/home/dannysauer/teleport/container/dannysauer/teleport
@@ -35,29 +48,60 @@ jobs:
 
       - name: Get latest tag from OBS registry
         id: obs
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version || '' }}
+          WAIT_FOR_OBS: ${{ inputs.wait_for_obs || 'false' }}
         run: |
-          # OBS publishes the image with a version label we can inspect without pulling.
-          # The image is public — no credentials needed.
-          INFO=$(skopeo inspect "docker://${{ env.OBS_IMAGE }}:latest" 2>/dev/null || echo "{}")
-          OBS_VERSION=$(echo "$INFO" | jq -r '.Labels["org.opencontainers.image.version"] // empty')
-
-          if [ -z "$OBS_VERSION" ]; then
-            echo "Could not determine OBS image version — skipping"
-            echo "version=" >> "$GITHUB_OUTPUT"
-          elif ! printf '%s' "$OBS_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$'; then
-            echo "OBS image version is not a release version: $OBS_VERSION" >&2
-            echo "version=" >> "$GITHUB_OUTPUT"
-          else
-            echo "OBS image version: $OBS_VERSION"
-            echo "version=$OBS_VERSION" >> "$GITHUB_OUTPUT"
+          attempts=1
+          if [ "$WAIT_FOR_OBS" = "true" ]; then
+            attempts=120
           fi
 
-          RAW=$(skopeo inspect --raw "docker://${{ env.OBS_IMAGE }}:latest" 2>/dev/null || true)
-          if [ -n "$RAW" ]; then
-            OBS_DIGEST=$(printf '%s' "$RAW" | sha256sum | awk '{print "sha256:" $1}')
-            echo "OBS manifest digest: $OBS_DIGEST"
+          OBS_VERSION=""
+          OBS_DIGEST=""
+          for attempt in $(seq 1 "$attempts"); do
+            echo "Inspecting OBS image (attempt ${attempt}/${attempts})"
+
+            # OBS publishes the image with a version label we can inspect without pulling.
+            # The image is public — no credentials needed.
+            INFO=$(skopeo inspect "docker://${{ env.OBS_IMAGE }}:latest" 2>/dev/null || echo "{}")
+            OBS_VERSION=$(echo "$INFO" | jq -r '.Labels["org.opencontainers.image.version"] // empty')
+            RAW=$(skopeo inspect --raw "docker://${{ env.OBS_IMAGE }}:latest" 2>/dev/null || true)
+
+            if [ -z "$OBS_VERSION" ]; then
+              echo "Could not determine OBS image version"
+            elif ! printf '%s' "$OBS_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$'; then
+              echo "OBS image version is not a release version: $OBS_VERSION" >&2
+              OBS_VERSION=""
+            elif [ -n "$EXPECTED_VERSION" ] && [ "$OBS_VERSION" != "$EXPECTED_VERSION" ]; then
+              echo "OBS is at $OBS_VERSION; waiting for $EXPECTED_VERSION"
+            elif [ -z "$RAW" ]; then
+              echo "OBS manifest is not available yet"
+            elif ! jq -e '
+              .manifests
+              and ([.manifests[].platform.architecture] | sort == ["amd64", "arm64"])
+            ' <<<"$RAW" >/dev/null; then
+              echo "OBS manifest is not multi-arch yet"
+            else
+              OBS_DIGEST=$(printf '%s' "$RAW" | sha256sum | awk '{print "sha256:" $1}')
+              echo "OBS version: $OBS_VERSION"
+              echo "OBS manifest digest: $OBS_DIGEST"
+              break
+            fi
+
+            OBS_VERSION=""
+            OBS_DIGEST=""
+            if [ "$attempt" -lt "$attempts" ]; then
+              sleep 60
+            fi
+          done
+
+          if [ -n "$OBS_VERSION" ] && [ -n "$OBS_DIGEST" ]; then
+            echo "version=$OBS_VERSION" >> "$GITHUB_OUTPUT"
             echo "digest=$OBS_DIGEST" >> "$GITHUB_OUTPUT"
           else
+            echo "No ready OBS image available — skipping"
+            echo "version=" >> "$GITHUB_OUTPUT"
             echo "digest=" >> "$GITHUB_OUTPUT"
           fi
 
@@ -89,7 +133,7 @@ jobs:
           GHCR_VERSION: ${{ steps.ghcr.outputs.version }}
           OBS_DIGEST: ${{ steps.obs.outputs.digest }}
           GHCR_DIGEST: ${{ steps.ghcr.outputs.digest }}
-          FORCE_SYNC: ${{ inputs.force }}
+          FORCE_SYNC: ${{ inputs.force || 'false' }}
         run: |
           OBS="$OBS_VERSION"
           GHCR="$GHCR_VERSION"
