@@ -192,11 +192,11 @@ jobs:
         with:
           ref: autobuild
 
-      - name: Checkout master branch (contains Helm chart source)
+      - name: Checkout release tag (contains Helm chart source)
         if: steps.decision.outputs.sync == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: master
+          ref: v${{ steps.decision.outputs.version }}
           path: teleport-src
 
       - name: Set up Helm
@@ -214,8 +214,8 @@ jobs:
           cd teleport-src
 
           # Update the default image reference to point to our ghcr.io image
-          # instead of the upstream AWS ECR image.
-          # This is done on-the-fly — master is not modified.
+          # instead of the upstream AWS ECR image. This is done on-the-fly; the
+          # release tag checkout is not modified or pushed.
           OUR_IMAGE="ghcr.io/${GHCR_OWNER}/teleport"
           sed -i "s|public.ecr.aws/gravitational/teleport-distroless|$OUR_IMAGE|g" \
             examples/chart/teleport-cluster/values.yaml
