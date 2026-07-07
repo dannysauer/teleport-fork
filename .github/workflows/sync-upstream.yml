@@ -88,12 +88,20 @@ jobs:
           fi
 
           WANT_COMMIT=$(git rev-list -n 1 "$WANT")
-          OBS_SOURCE_SHA=$(git ls-remote origin refs/heads/obs-build-source | awk '{print $1}')
-          if [ "$OBS_SOURCE_SHA" = "$WANT_COMMIT" ]; then
+          BUILT_TAG=""
+          if git cat-file -e origin/obs-build-assets:teleport-build-assets.env 2>/dev/null; then
+            BUILT_TAG=$(
+              git show origin/obs-build-assets:teleport-build-assets.env \
+                | awk -F= '$1 == "TELEPORT_TAG" { print $2; exit }'
+            )
+          fi
+
+          if [ "$BUILT_TAG" = "$WANT" ]; then
             echo "Latest stable release already built: $WANT"
             echo "needs_build=false" >> "$GITHUB_OUTPUT"
           else
             echo "Latest stable release needs build: $WANT"
+            echo "Current OBS assets tag: ${BUILT_TAG:-none}"
             echo "needs_build=true" >> "$GITHUB_OUTPUT"
           fi
           echo "want_tag=$WANT" >> "$GITHUB_OUTPUT"
