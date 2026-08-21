@@ -24,14 +24,14 @@
           <label name="org.opencontainers.image.title" value="Teleport"/>
           <label name="org.opencontainers.image.description"
                  value="Identity-aware access proxy for infrastructure"/>
-          <label name="org.opencontainers.image.version" value="18.9.2"/>
+          <label name="org.opencontainers.image.version" value="18.10.6"/>
           <label name="org.opencontainers.image.url"
                  value="https://github.com/dannysauer/teleport-fork"/>
           <label name="org.opencontainers.image.source"
                  value="https://github.com/dannysauer/teleport-fork"/>
           <label name="org.opencontainers.image.licenses" value="AGPL-3.0"/>
         </labels>
-        <history author="Teleport Autobuild &lt;noreply@github.com&gt;">Teleport 18.9.2 container</history>
+        <history author="Teleport Autobuild &lt;noreply@github.com&gt;">Teleport 18.10.6 container</history>
       </containerconfig>
     </type>
     <!--
@@ -39,7 +39,7 @@
       gravitational_teleport OBS package. sync-registry.yml reads the resulting
       OCI version label before mirroring the image to ghcr.io.
     -->
-    <version>18.9.2</version>
+    <version>18.10.6</version>
     <packagemanager>zypper</packagemanager>
   </preferences>
 
