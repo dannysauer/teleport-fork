@@ -1,0 +1,30 @@
+Source: teleport
+Section: net
+Priority: optional
+Maintainer: Teleport Autobuild <noreply@github.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ clang,
+ llvm,
+ libbpf-dev,
+ libpam0g-dev,
+ libfido2-dev,
+ pkg-config,
+ make,
+ git,
+ ca-certificates
+Standards-Version: 4.6.2
+Homepage: https://github.com/gravitational/teleport
+Rules-Requires-Root: no
+
+Package: teleport
+Architecture: amd64 arm64
+Depends:
+ ${misc:Depends},
+ ${shlibs:Depends},
+ libpam-runtime
+Description: Identity-aware access proxy for infrastructure
+ Teleport is an identity-aware, multi-protocol access proxy for your
+ infrastructure. It provides certificate-based authentication and
+ authorization for SSH, Kubernetes, databases, Windows desktops, and
+ web applications — with session recording, audit logging, and RBAC.
