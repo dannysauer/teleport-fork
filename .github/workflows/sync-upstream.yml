@@ -48,7 +48,12 @@ jobs:
 
       - name: Fetch upstream
         run: |
-          git fetch upstream --tags --no-recurse-submodules
+          # Upstream sometimes moves a release tag after publishing it. Without
+          # --force the fetch rejects the moved tag and fails the job, even
+          # when that tag is not the one being built. --force only updates
+          # the local copies; "Push latest stable tag" decides what this
+          # fork's tags may change to.
+          git fetch upstream --tags --force --no-recurse-submodules
 
       - name: Check if master needs updating
         id: check
@@ -71,6 +76,9 @@ jobs:
 
       - name: Detect latest upstream stable release
         id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           # Stable Teleport releases are tagged on upstream release branches,
           # not necessarily on master, so scan all fetched upstream tags. Limit
@@ -88,8 +96,22 @@ jobs:
           fi
 
           WANT_COMMIT=$(git rev-list -n 1 "$WANT")
-          OBS_SOURCE_SHA=$(git ls-remote origin refs/heads/obs-build-source | awk '{print $1}')
-          if [ "$OBS_SOURCE_SHA" = "$WANT_COMMIT" ]; then
+
+          # prep-obs-source.yml pushes obs-build-assets after the packaging
+          # source, and records the release commit it built as TELEPORT_COMMIT
+          # in teleport-build-assets.env. A prep run that failed before that
+          # push leaves the old commit there and is dispatched again; a
+          # missing branch means nothing has been built yet.
+          BUILT_COMMIT=""
+          ASSETS_REF=$(git ls-remote origin refs/heads/obs-build-assets | awk '$2 == "refs/heads/obs-build-assets" { print $1 }')
+          if [ -n "$ASSETS_REF" ]; then
+            BUILT_COMMIT=$(
+              gh api -H 'Accept: application/vnd.github.raw' \
+                "repos/$REPO/contents/teleport-build-assets.env?ref=$ASSETS_REF" \
+                | awk -F= '$1 == "TELEPORT_COMMIT" { print $2 }'
+            )
+          fi
+          if [ "$BUILT_COMMIT" = "$WANT_COMMIT" ]; then
             echo "Latest stable release already built: $WANT"
             echo "needs_build=false" >> "$GITHUB_OUTPUT"
           else
@@ -104,10 +126,21 @@ jobs:
         env:
           TAG: ${{ steps.release.outputs.want_tag }}
         run: |
-          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+          # Compare object IDs, not just names. If upstream moved a tag this
+          # fork already has, stop instead of following it: the fork may have
+          # built and published that version, and a moved tag is not always a
+          # good one (upstream's v18.11.0 moved to a commit that reports
+          # 18.10.7). To accept a move, review it and delete the fork's tag;
+          # the next run pushes upstream's.
+          LOCAL=$(git rev-parse "refs/tags/$TAG")
+          REMOTE=$(git ls-remote origin "refs/tags/$TAG" | awk -v ref="refs/tags/$TAG" '$2 == ref { print $1 }')
+          if [ "$REMOTE" = "$LOCAL" ]; then
             echo "Tag already exists in origin: $TAG"
-          else
+          elif [ -z "$REMOTE" ]; then
             git push origin "refs/tags/$TAG"
+          else
+            echo "::error::Upstream moved $TAG from $REMOTE to $LOCAL. Review the move; to accept it, delete $TAG from this fork."
+            exit 1
           fi
 
       - name: Dispatch OBS source preparation

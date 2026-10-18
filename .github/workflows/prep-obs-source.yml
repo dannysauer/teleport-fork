@@ -289,6 +289,7 @@ jobs:
           persist-credentials: false
 
       - name: Update OBS source branch
+        id: source
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ needs.build-webassets.outputs.tag }}
@@ -296,6 +297,7 @@ jobs:
           AUTOBUILD_SHA: ${{ needs.build-webassets.outputs.autobuild_sha }}
         run: |
           cd teleport-src
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           git fetch --depth=1 origin "$AUTOBUILD_SHA"
           TMP=$(mktemp -d)
           git archive "$AUTOBUILD_SHA" obs/teleport | tar -x -C "$TMP"
@@ -374,6 +376,7 @@ jobs:
           TAG: ${{ needs.build-webassets.outputs.tag }}
           VERSION: ${{ needs.build-webassets.outputs.version }}
           AUTOBUILD_SHA: ${{ needs.build-webassets.outputs.autobuild_sha }}
+          TELEPORT_COMMIT: ${{ steps.source.outputs.commit }}
         run: |
           cp artifacts/webassets/teleport-webassets.tar.gz         teleport-webassets.tar.gz
           cp artifacts/fdpass-vendor/teleport-fdpass-vendor.tar.gz teleport-fdpass-vendor.tar.gz
@@ -431,6 +434,7 @@ jobs:
           cat > teleport-build-assets.env <<EOF
           TELEPORT_TAG=$TAG
           TELEPORT_VERSION=$VERSION
+          TELEPORT_COMMIT=$TELEPORT_COMMIT
           AUTOBUILD_SHA=$AUTOBUILD_SHA
           GOLANG_VERSION=$GOLANG_VERSION
           EOF
